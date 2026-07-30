@@ -17,7 +17,15 @@ import {
 } from "@/components/ui/select";
 import { adjustStock, deleteProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
 import { activeMembers, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
-import type { Product } from "@/lib/gym/types";
+import type { Product, ProductCategory } from "@/lib/gym/types";
+
+const CATEGORIES: ProductCategory[] = [
+  "Supplements",
+  "Apparel",
+  "Accessories",
+  "Equipment",
+  "Beverages",
+];
 
 export const Route = createFileRoute("/products")({
   head: () => ({
@@ -365,7 +373,8 @@ function ProductDialog({
                 saveProduct({
                   id: product?.id,
                   name: form.name.trim(),
-                  category: form.category.trim() || "General",
+                  category: form.category,
+                  sku: form.sku.trim() || form.name.trim().slice(0, 6).toUpperCase(),
                   cost: Number(form.cost) || 0,
                   price: Number(form.price),
                   stock: Number(form.stock) || 0,
