@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as MembershipsRouteImport } from './routes/memberships'
+import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as MembersIndexRouteImport } from './routes/members.index'
 import { Route as MembersMemberIdRouteImport } from './routes/members.$memberId'
 
@@ -30,6 +31,11 @@ const MembershipsRoute = MembershipsRouteImport.update({
   path: '/memberships',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PaymentsRoute = PaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MembersIndexRoute = MembersIndexRouteImport.update({
   id: '/members/',
   path: '/members/',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/memberships': typeof MembershipsRoute
+  '/payments': typeof PaymentsRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/memberships': typeof MembershipsRoute
+  '/payments': typeof PaymentsRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members': typeof MembersIndexRoute
 }
@@ -60,20 +68,33 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/memberships': typeof MembershipsRoute
+  '/payments': typeof PaymentsRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/login' | '/memberships' | '/members/$memberId' | '/members/'
+    | '/'
+    | '/login'
+    | '/memberships'
+    | '/payments'
+    | '/members/$memberId'
+    | '/members/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/memberships' | '/members/$memberId' | '/members'
+  to:
+    | '/'
+    | '/login'
+    | '/memberships'
+    | '/payments'
+    | '/members/$memberId'
+    | '/members'
   id:
     | '__root__'
     | '/'
     | '/login'
     | '/memberships'
+    | '/payments'
     | '/members/$memberId'
     | '/members/'
   fileRoutesById: FileRoutesById
@@ -82,6 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   MembershipsRoute: typeof MembershipsRoute
+  PaymentsRoute: typeof PaymentsRoute
   MembersMemberIdRoute: typeof MembersMemberIdRoute
   MembersIndexRoute: typeof MembersIndexRoute
 }
@@ -109,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MembershipsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/payments': {
+      id: '/payments'
+      path: '/payments'
+      fullPath: '/payments'
+      preLoaderRoute: typeof PaymentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/members/': {
       id: '/members/'
       path: '/members'
@@ -130,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   MembershipsRoute: MembershipsRoute,
+  PaymentsRoute: PaymentsRoute,
   MembersMemberIdRoute: MembersMemberIdRoute,
   MembersIndexRoute: MembersIndexRoute,
 }
