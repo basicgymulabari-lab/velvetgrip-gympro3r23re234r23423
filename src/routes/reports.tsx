@@ -80,7 +80,7 @@ function ReportsPage() {
   const exportCsv = () => {
     const rows = [
       ["Period", "Revenue"],
-      ...series.map((d) => [d.label, String(d.value)]),
+      ...series.map((d) => [d.label, String(d.total)]),
       [],
       ["Summary", ""],
       ["Total revenue", String(totalRevenue(state))],
@@ -167,7 +167,7 @@ function ReportsPage() {
                 }}
                 formatter={(v: number) => money(v, cur)}
               />
-              <Area type="monotone" dataKey="value" stroke="#D4AF37" strokeWidth={2} fill="url(#revGold)" />
+              <Area type="monotone" dataKey="total" stroke="#D4AF37" strokeWidth={2} fill="url(#revGold)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
