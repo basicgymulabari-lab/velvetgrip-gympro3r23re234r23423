@@ -110,7 +110,7 @@ function MembersPage() {
   const cur = state.settings.currency;
   const paged = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const setSearch = (patch: Record<string, unknown>) =>
-    navigate({ search: (prev) => ({ ...prev, ...patch }) });
+    navigate({ search: (prev: Record<string, unknown>) => ({ ...prev, ...patch }) as never });
 
   return (
     <>

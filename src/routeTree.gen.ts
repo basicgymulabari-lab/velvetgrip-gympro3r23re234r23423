@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as MembersIndexRouteImport } from './routes/members.index'
+import { Route as MembersMemberIdRouteImport } from './routes/members.$memberId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,34 +29,43 @@ const MembersIndexRoute = MembersIndexRouteImport.update({
   path: '/members/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MembersMemberIdRoute = MembersMemberIdRouteImport.update({
+  id: '/members/$memberId',
+  path: '/members/$memberId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/members/$memberId': typeof MembersMemberIdRoute
   '/members': typeof MembersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/members/'
+  fullPaths: '/' | '/login' | '/members/$memberId' | '/members/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/members'
-  id: '__root__' | '/' | '/login' | '/members/'
+  to: '/' | '/login' | '/members/$memberId' | '/members'
+  id: '__root__' | '/' | '/login' | '/members/$memberId' | '/members/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  MembersMemberIdRoute: typeof MembersMemberIdRoute
   MembersIndexRoute: typeof MembersIndexRoute
 }
 
@@ -82,24 +92,22 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MembersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/members/$memberId': {
+      id: '/members/$memberId'
+      path: '/members/$memberId'
+      fullPath: '/members/$memberId'
+      preLoaderRoute: typeof MembersMemberIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  MembersMemberIdRoute: MembersMemberIdRoute,
   MembersIndexRoute: MembersIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
