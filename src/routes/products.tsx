@@ -1,0 +1,421 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { Plus, Search, Pencil, Trash2, Minus, ShoppingCart, PackageX, Boxes } from "lucide-react";
+import { toast } from "sonner";
+import { AppShell } from "@/components/app/AppShell";
+import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { adjustStock, deleteProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
+import { activeMembers, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
+import type { Product } from "@/lib/gym/types";
+
+export const Route = createFileRoute("/products")({
+  head: () => ({
+    meta: [
+      { title: "Products & Sales — IRONVAULT Gym Management" },
+      {
+        name: "description",
+        content:
+          "Manage supplements and gym merchandise, track stock levels, record sales and monitor low-stock alerts offline.",
+      },
+      { property: "og:title", content: "Products & Sales — IRONVAULT Gym Management" },
+      {
+        property: "og:description",
+        content: "Inventory, stock alerts, sales recording and profit tracking for your gym store.",
+      },
+    ],
+  }),
+  component: () => (
+    <AppShell>
+      <ProductsPage />
+    </AppShell>
+  ),
+});
+
+function ProductsPage() {
+  const state = useGym();
+  const [q, setQ] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [sellFor, setSellFor] = useState<Product | null>(null);
+
+  const filtered = useMemo(() => {
+    if (!state) return [];
+    const t = q.trim().toLowerCase().slice(0, 60);
+    return state.products.filter((p) => !t || `${p.name} ${p.category}`.toLowerCase().includes(t));
+  }, [state, q]);
+
+  if (!state) return null;
+  const cur = state.settings.currency;
+  const low = lowStock(state);
+  const stockValue = state.products.reduce((a, p) => a + p.stock * p.cost, 0);
+  const recentSales = [...state.sales].sort((a, b) => +new Date(b.date) - +new Date(a.date)).slice(0, 8);
+
+  return (
+    <>
+      <PageHeader
+        title="Products & Sales"
+        subtitle="Supplements, merchandise and in-gym store operations"
+        actions={
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" /> Add Product
+          </Button>
+        }
+      />
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          ["Products", String(state.products.length), Boxes],
+          ["Stock value", money(stockValue, cur), Boxes],
+          ["Low stock", String(low.length), PackageX],
+          ["Sales profit", money(profitOfSales(state), cur), ShoppingCart],
+        ].map(([label, value, Icon]) => {
+          const I = Icon as typeof Boxes;
+          return (
+            <div key={label as string} className="surface-panel flex items-center gap-4 rounded-2xl p-5">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-gold/35 bg-gold/10 text-gold">
+                <I className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label as string}</p>
+                <p className="truncate font-display text-2xl">{value as string}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {low.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-warning/40 bg-warning/10 p-4">
+          <p className="text-sm font-medium text-warning">Low stock alert</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {low.map((p) => `${p.name} (${p.stock} left)`).join(" · ")}
+          </p>
+        </div>
+      )}
+
+      <Panel className="mb-6">
+        <div className="relative mb-5 max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search products"
+            value={q}
+            maxLength={60}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+
+        {filtered.length === 0 ? (
+          <EmptyState title="No products found" hint="Try a different search or add a product." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <th className="py-3">Product</th>
+                  <th className="py-3">Category</th>
+                  <th className="py-3">Cost</th>
+                  <th className="py-3">Price</th>
+                  <th className="py-3">Stock</th>
+                  <th className="py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((p) => (
+                  <tr key={p.id} className="border-b border-border/50 hover:bg-secondary/40">
+                    <td className="py-3 font-medium">{p.name}</td>
+                    <td className="py-3 text-muted-foreground">{p.category}</td>
+                    <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
+                    <td className="py-3 text-gold">{money(p.price, cur)}</td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label="Decrease stock"
+                          onClick={() => adjustStock(p.id, -1)}
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </Button>
+                        <span
+                          className={`w-10 text-center font-medium ${
+                            p.stock <= p.lowStockAt ? "text-warning" : ""
+                          }`}
+                        >
+                          {p.stock}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label="Increase stock"
+                          onClick={() => adjustStock(p.id, 1)}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="secondary" disabled={p.stock < 1} onClick={() => setSellFor(p)}>
+                          <ShoppingCart className="mr-1.5 h-3.5 w-3.5" /> Sell
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Edit product"
+                          onClick={() => {
+                            setEditing(p);
+                            setFormOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          aria-label="Delete product"
+                          onClick={() => {
+                            deleteProduct(p.id);
+                            toast.success("Product deleted");
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Recent Sales">
+        {recentSales.length === 0 ? (
+          <EmptyState title="No sales yet" hint="Sales you record will appear here." />
+        ) : (
+          <ul className="divide-y divide-border/60">
+            {recentSales.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {s.qty} × {state.products.find((p) => p.id === s.productId)?.name ?? "Product"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {s.buyer} · {shortDate(s.date)}
+                  </p>
+                </div>
+                <p className="shrink-0 font-medium text-gold">{money(s.total, cur)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <ProductDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
+      <SellDialog product={sellFor} onClose={() => setSellFor(null)} />
+    </>
+  );
+}
+
+function ProductDialog({
+  open,
+  onOpenChange,
+  product,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  product: Product | null;
+}) {
+  const [form, setForm] = useState({ name: "", category: "", cost: "", price: "", stock: "", lowStockAt: "5" });
+
+  useMemo(() => {
+    if (open) {
+      setForm({
+        name: product?.name ?? "",
+        category: product?.category ?? "",
+        cost: product ? String(product.cost) : "",
+        price: product ? String(product.price) : "",
+        stock: product ? String(product.stock) : "",
+        lowStockAt: product ? String(product.lowStockAt) : "5",
+      });
+    }
+  }, [open, product]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl tracking-wide">
+            {product ? "Edit Product" : "Add Product"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={form.name}
+                maxLength={60}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Input
+                value={form.category}
+                maxLength={40}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Cost price</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.cost}
+                onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Selling price</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.price}
+                onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Stock</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.stock}
+                onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Low stock alert at</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.lowStockAt}
+                onChange={(e) => setForm((f) => ({ ...f, lowStockAt: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (form.name.trim().length < 2) return toast.error("Enter a product name");
+                if (Number(form.price) <= 0) return toast.error("Enter a valid selling price");
+                saveProduct({
+                  id: product?.id,
+                  name: form.name.trim(),
+                  category: form.category.trim() || "General",
+                  cost: Number(form.cost) || 0,
+                  price: Number(form.price),
+                  stock: Number(form.stock) || 0,
+                  lowStockAt: Number(form.lowStockAt) || 0,
+                });
+                toast.success(product ? "Product updated" : "Product added");
+                onOpenChange(false);
+              }}
+            >
+              Save product
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SellDialog({ product, onClose }: { product: Product | null; onClose: () => void }) {
+  const state = useGym();
+  const [qty, setQty] = useState("1");
+  const [memberId, setMemberId] = useState("walkin");
+
+  if (!state || !product) return null;
+  const n = Number(qty) || 0;
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl tracking-wide">Sell {product.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Quantity (in stock: {product.stock})</Label>
+            <Input type="number" min={1} max={product.stock} value={qty} onChange={(e) => setQty(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Buyer</Label>
+            <Select value={memberId} onValueChange={setMemberId}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-64">
+                <SelectItem value="walkin">Walk-in customer</SelectItem>
+                {activeMembers(state).map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Total:{" "}
+            <span className="font-display text-xl text-gold">
+              {money(product.price * n, state.settings.currency)}
+            </span>
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (n < 1 || n > product.stock) return toast.error("Enter a valid quantity");
+                const member = memberId === "walkin" ? null : activeMembers(state).find((m) => m.id === memberId);
+                sellProduct(product.id, n, member?.name ?? "Walk-in customer", member?.id ?? null);
+                toast.success("Sale recorded");
+                setQty("1");
+                onClose();
+              }}
+            >
+              Complete sale
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
