@@ -15,6 +15,7 @@ import { Route as MembershipsRouteImport } from './routes/memberships'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as ProductsRouteImport } from './routes/products'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TrashRouteImport } from './routes/trash'
 import { Route as MembersIndexRouteImport } from './routes/members.index'
 import { Route as MembersMemberIdRouteImport } from './routes/members.$memberId'
@@ -49,6 +50,11 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TrashRoute = TrashRouteImport.update({
   id: '/trash',
   path: '/trash',
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/payments': typeof PaymentsRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/payments': typeof PaymentsRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members': typeof MembersIndexRoute
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/payments': typeof PaymentsRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
@@ -108,6 +117,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/products'
     | '/reports'
+    | '/settings'
     | '/trash'
     | '/members/$memberId'
     | '/members/'
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/products'
     | '/reports'
+    | '/settings'
     | '/trash'
     | '/members/$memberId'
     | '/members'
@@ -130,6 +141,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/products'
     | '/reports'
+    | '/settings'
     | '/trash'
     | '/members/$memberId'
     | '/members/'
@@ -142,6 +154,7 @@ export interface RootRouteChildren {
   PaymentsRoute: typeof PaymentsRoute
   ProductsRoute: typeof ProductsRoute
   ReportsRoute: typeof ReportsRoute
+  SettingsRoute: typeof SettingsRoute
   TrashRoute: typeof TrashRoute
   MembersMemberIdRoute: typeof MembersMemberIdRoute
   MembersIndexRoute: typeof MembersIndexRoute
@@ -191,6 +204,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/trash': {
       id: '/trash'
       path: '/trash'
@@ -222,6 +242,7 @@ const rootRouteChildren: RootRouteChildren = {
   PaymentsRoute: PaymentsRoute,
   ProductsRoute: ProductsRoute,
   ReportsRoute: ReportsRoute,
+  SettingsRoute: SettingsRoute,
   TrashRoute: TrashRoute,
   MembersMemberIdRoute: MembersMemberIdRoute,
   MembersIndexRoute: MembersIndexRoute,

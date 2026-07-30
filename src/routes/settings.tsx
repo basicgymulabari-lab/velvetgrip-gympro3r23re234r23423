@@ -174,8 +174,8 @@ function SettingsPage() {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 try {
-                  const ok = restoreBackup(await file.text());
-                  toast[ok ? "success" : "error"](ok ? "Backup restored" : "Invalid backup file");
+                  restoreBackup(await file.text());
+                  toast.success("Backup restored");
                 } catch {
                   toast.error("Could not read that file");
                 }
