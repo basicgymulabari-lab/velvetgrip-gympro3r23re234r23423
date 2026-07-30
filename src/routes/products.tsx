@@ -248,13 +248,22 @@ function ProductDialog({
   onOpenChange: (v: boolean) => void;
   product: Product | null;
 }) {
-  const [form, setForm] = useState({ name: "", category: "", cost: "", price: "", stock: "", lowStockAt: "5" });
+  const [form, setForm] = useState({
+    name: "",
+    category: "Supplements" as ProductCategory,
+    sku: "",
+    cost: "",
+    price: "",
+    stock: "",
+    lowStockAt: "5",
+  });
 
   useMemo(() => {
     if (open) {
       setForm({
         name: product?.name ?? "",
-        category: product?.category ?? "",
+        category: product?.category ?? "Supplements",
+        sku: product?.sku ?? "",
         cost: product ? String(product.cost) : "",
         price: product ? String(product.price) : "",
         stock: product ? String(product.stock) : "",
@@ -283,12 +292,31 @@ function ProductDialog({
             </div>
             <div className="space-y-2">
               <Label>Category</Label>
-              <Input
+              <Select
                 value={form.category}
-                maxLength={40}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                onValueChange={(v) => setForm((f) => ({ ...f, category: v as ProductCategory }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>SKU</Label>
+              <Input
+                value={form.sku}
+                maxLength={24}
+                onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
               />
             </div>
+
             <div className="space-y-2">
               <Label>Cost price</Label>
               <Input
