@@ -79,7 +79,7 @@ export function MemberFormDialog({
             planId: "",
             paidNow: "",
           }
-        : { ...empty, planId: state?.plans[0]?.id ?? "" },
+        : { ...empty, planId: state?.plans.filter((p) => !p.deletedAt)[0]?.id ?? "" },
     );
   }, [open, member, state]);
 
@@ -231,7 +231,7 @@ export function MemberFormDialog({
                     <SelectValue placeholder="Select a plan" />
                   </SelectTrigger>
                   <SelectContent>
-                    {state.plans.map((p) => (
+                    {state.plans.filter((p) => !p.deletedAt).map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name} — {state.settings.currency}
                         {p.price.toLocaleString("en-IN")}

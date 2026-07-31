@@ -416,7 +416,7 @@ export function RenewDialog({
                 <SelectValue placeholder="Select a plan" />
               </SelectTrigger>
               <SelectContent>
-                {state.plans.map((p) => (
+                {state.plans.filter((p) => !p.deletedAt).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name} — {money(p.price, state.settings.currency)} / {p.durationDays} days
                   </SelectItem>
