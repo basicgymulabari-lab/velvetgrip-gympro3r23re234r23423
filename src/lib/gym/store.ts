@@ -274,13 +274,26 @@ function purgeOldTrash() {
   if (!state) return;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const expired = state.members.filter((m) => m.deletedAt && new Date(m.deletedAt).getTime() < cutoff);
-  if (expired.length === 0) return;
+  if (expired.length === 0) {
+    purgeOldTrashedPlans();
+    return;
+  }
   const ids = new Set(expired.map((m) => m.id));
   state = {
     ...state,
     members: state.members.filter((m) => !ids.has(m.id)),
     memberships: state.memberships.filter((m) => !ids.has(m.memberId)),
   };
+  purgeOldTrashedPlans();
+  persist();
+}
+
+function purgeOldTrashedPlans() {
+  if (!state) return;
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const keep = state.plans.filter((p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff));
+  if (keep.length === state.plans.length) return;
+  state = { ...state, plans: keep };
   persist();
 }
 
@@ -325,6 +338,26 @@ export function savePlan(plan: Omit<Plan, "id"> & { id?: string }) {
 }
 
 export function deletePlan(id: string) {
+  trashPlan(id);
+}
+
+export function trashPlan(id: string) {
+  setState((st) => ({
+    ...st,
+    plans: st.plans.map((p) =>
+      p.id === id && !p.locked ? { ...p, deletedAt: iso(new Date()) } : p,
+    ),
+  }));
+}
+
+export function restorePlan(id: string) {
+  setState((st) => ({
+    ...st,
+    plans: st.plans.map((p) => (p.id === id ? { ...p, deletedAt: null } : p)),
+  }));
+}
+
+export function deletePlanPermanently(id: string) {
   setState((st) => ({ ...st, plans: st.plans.filter((p) => p.id !== id) }));
 }
 

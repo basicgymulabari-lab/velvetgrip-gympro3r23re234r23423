@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, RefreshCw, Snowflake, Trash2, BellRing, Pencil } from "lucide-react";
+import { Plus, RefreshCw, Snowflake, Trash2, BellRing, Pencil, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
@@ -12,10 +12,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { deletePlan, savePlan, toggleFreeze, useGym } from "@/lib/gym/store";
+import { Switch } from "@/components/ui/switch";
+import { trashPlan, savePlan, toggleFreeze, useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
+  livePlans,
   daysUntil,
   membershipHistory,
   money,
@@ -53,6 +55,8 @@ function MembershipsPage() {
   const [planOpen, setPlanOpen] = useState(false);
   const [editing, setEditing] = useState<Plan | null>(null);
   const [renewFor, setRenewFor] = useState<string | null>(null);
+  const [trashPlanTarget, setTrashPlanTarget] = useState<Plan | null>(null);
+  const [lockedPlan, setLockedPlan] = useState<Plan | null>(null);
 
   const rows = useMemo(() => {
     if (!state) return [];
@@ -91,7 +95,7 @@ function MembershipsPage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Active plans", String(state.plans.filter((p) => p.active).length)],
+          ["Active plans", String(livePlans(state).filter((p) => p.active).length)],
           ["Expiring soon", String(expiring.length)],
           ["Expired", String(expired.length)],
           ["Frozen", String(frozen.length)],
@@ -105,14 +109,17 @@ function MembershipsPage() {
 
       <Panel title="Membership Plans" className="mb-6">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {state.plans.map((p) => (
+          {livePlans(state).map((p) => (
             <div
               key={p.id}
               className="group relative rounded-2xl border border-border bg-secondary/30 p-5 transition-all hover:border-gold/40"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate font-display text-xl tracking-wide">{p.name}</p>
+                  <p className="flex items-center gap-1.5 truncate font-display text-xl tracking-wide">
+                    {p.name}
+                    {p.locked && <Lock className="h-3.5 w-3.5 shrink-0 text-gold" />}
+                  </p>
                   <p className="text-xs text-muted-foreground">{p.durationDays} days</p>
                 </div>
                 <div className="flex shrink-0 gap-1">
@@ -133,10 +140,7 @@ function MembershipsPage() {
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive"
                     aria-label="Delete plan"
-                    onClick={() => {
-                      deletePlan(p.id);
-                      toast.success("Plan removed");
-                    }}
+                    onClick={() => (p.locked ? setLockedPlan(p) : setTrashPlanTarget(p))}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -263,6 +267,56 @@ function MembershipsPage() {
         <RenewDialog open onOpenChange={(v) => !v && setRenewFor(null)} memberId={renewFor} />
       )}
       <PlanDialog open={planOpen} onOpenChange={setPlanOpen} plan={editing} />
+
+      <Dialog open={!!trashPlanTarget} onOpenChange={(v) => !v && setTrashPlanTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">
+              Move this membership plan to Trash?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This membership plan will be moved to Trash. You can restore it within 30 days before it is
+              permanently deleted.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setTrashPlanTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  trashPlan(trashPlanTarget!.id);
+                  toast.success("Plan moved to Trash");
+                  setTrashPlanTarget(null);
+                }}
+              >
+                Move to Trash
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!lockedPlan} onOpenChange={(v) => !v && setLockedPlan(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">
+              This membership plan is locked
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This membership plan is protected and cannot be deleted while it is locked. Please unlock the
+              plan first if you want to move it to Trash.
+            </p>
+            <div className="flex justify-end">
+              <Button onClick={() => setLockedPlan(null)}>OK</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -276,7 +330,13 @@ function PlanDialog({
   onOpenChange: (v: boolean) => void;
   plan: Plan | null;
 }) {
-  const [form, setForm] = useState({ name: "", price: "", durationDays: "", description: "" });
+  const [form, setForm] = useState({
+    name: "",
+    price: "",
+    durationDays: "",
+    description: "",
+    locked: false,
+  });
   const [touched, setTouched] = useState(false);
 
   useMemo(() => {
@@ -286,6 +346,7 @@ function PlanDialog({
         price: plan ? String(plan.price) : "",
         durationDays: plan ? String(plan.durationDays) : "",
         description: plan?.description ?? "",
+        locked: plan?.locked ?? false,
       });
       setTouched(false);
     }
@@ -340,6 +401,16 @@ function PlanDialog({
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             />
           </div>
+          <div className="flex items-center justify-between rounded-xl border border-border bg-secondary/30 p-3">
+            <div>
+              <Label>Lock this membership plan</Label>
+              <p className="text-xs text-muted-foreground">Locked plans cannot be moved to Trash.</p>
+            </div>
+            <Switch
+              checked={form.locked}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, locked: v }))}
+            />
+          </div>
           {touched && invalid && (
             <p className="text-xs text-destructive">
               Provide a name, a price above 0 and a duration of at least 1 day.
@@ -360,6 +431,8 @@ function PlanDialog({
                   durationDays: Number(form.durationDays),
                   description: form.description.trim(),
                   active: true,
+                  locked: form.locked,
+                  deletedAt: plan?.deletedAt ?? null,
                 });
                 toast.success(plan ? "Plan updated" : "Plan created");
                 onOpenChange(false);
