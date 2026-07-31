@@ -189,13 +189,16 @@ function ReportsPage() {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{
-                    background: "#111111",
-                    border: "1px solid rgba(212,175,55,0.35)",
-                    borderRadius: 12,
-                    color: "#fff",
-                  }}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-xl border border-gold/60 bg-popover px-3.5 py-2.5 text-xs shadow-lg">
+                        <p className="font-semibold text-gold">{payload[0].name}</p>
+                        <p className="mt-0.5 font-medium text-gold/90">Members: {payload[0].value}</p>
+                      </div>
+                    ) : null
+                  }
                 />
+
               </PieChart>
             </ResponsiveContainer>
           </div>
