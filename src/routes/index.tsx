@@ -145,9 +145,9 @@ function Dashboard() {
           search={{ filter: "active", q: "", page: 1 }}
         />
         <StatCard
-          label="Collected Revenue"
-          value={money(data.revenue, cur)}
-          hint={`${money(data.monthRevenue, cur)} this month`}
+          label={metricMeta((state.settings.revenueCardMetric ?? "today") as RevenueMetric).label}
+          value={money(data.cardRevenue, cur)}
+          hint={metricMeta((state.settings.revenueCardMetric ?? "today") as RevenueMetric).hint}
           icon={Wallet}
           tone="success"
           to="/payments"
