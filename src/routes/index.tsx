@@ -65,7 +65,7 @@ export const Route = createFileRoute("/")({
       { property: "og:title", content: "Dashboard — IRONVAULT Gym Management" },
       {
         property: "og:description",
-        content: "Members, revenue, dues and inventory analytics in one luxurious offline workspace.",
+        content: "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard.",
       },
     ],
   }),
