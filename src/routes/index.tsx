@@ -108,6 +108,7 @@ function Dashboard() {
       expired: statuses.filter((s) => s === "expired").length,
       frozen: statuses.filter((s) => s === "frozen").length,
       revenue: totalRevenue(state),
+      cardRevenue: revenueForMetric(state, (state.settings.revenueCardMetric ?? "today") as RevenueMetric),
       monthRevenue: totalRevenue(state, monthStart),
       due: totalDue(state),
       series: revenueSeries(state, range),
