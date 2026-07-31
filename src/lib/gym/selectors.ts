@@ -41,6 +41,9 @@ export const daysUntil = (d: string | Date) =>
 export const activeMembers = (s: GymState) => s.members.filter((m) => !m.deletedAt);
 export const trashedMembers = (s: GymState) => s.members.filter((m) => m.deletedAt);
 
+export const livePlans = (s: GymState) => s.plans.filter((p) => !p.deletedAt);
+export const trashedPlans = (s: GymState) => s.plans.filter((p) => p.deletedAt);
+
 export function currentMembership(s: GymState, memberId: string): Membership | undefined {
   return s.memberships
     .filter((m) => m.memberId === memberId)
@@ -151,7 +154,7 @@ export function revenueSeries(s: GymState, range: Range) {
 }
 
 export function planDistribution(s: GymState) {
-  return s.plans
+  return livePlans(s)
     .map((plan) => ({
       name: plan.name,
       value: activeMembers(s).filter((m) => currentMembership(s, m.id)?.planId === plan.id).length,
@@ -308,7 +311,15 @@ export function buildNotifications(s: GymState): Notification[] {
     });
   });
 
-  return list.sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  const isTodayBirthday = (n: Notification) =>
+    n.category === "birthday" && n.description === "Birthday today";
+
+  return list.sort((a, b) => {
+    const pa = isTodayBirthday(a) ? 1 : 0;
+    const pb = isTodayBirthday(b) ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    return +new Date(b.date) - +new Date(a.date);
+  });
 }
 
 /* ------------------------------------------------------------------ */

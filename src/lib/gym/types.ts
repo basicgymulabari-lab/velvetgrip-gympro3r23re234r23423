@@ -44,6 +44,8 @@ export type Plan = {
   durationDays: number;
   description: string;
   active: boolean;
+  locked?: boolean;
+  deletedAt?: string | null;
 };
 
 /** One membership term for a member. Drives status + dues. */
