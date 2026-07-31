@@ -139,6 +139,7 @@ export type Settings = {
   lowStockAlerts: boolean;
   expiryReminderDays: number;
   adminName: string;
+  revenueCardMetric?: "today" | "weekly" | "monthly" | "yearly" | "total";
 };
 
 export type GymState = {
