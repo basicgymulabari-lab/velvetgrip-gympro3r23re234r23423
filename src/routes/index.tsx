@@ -37,16 +37,19 @@ import { useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
+  metricMeta,
   money,
   planDistribution,
   profitOfSales,
   relative,
+  revenueForMetric,
   revenueSeries,
   statusOf,
   topProducts,
   totalDue,
   totalRevenue,
   type Range,
+  type RevenueMetric,
 } from "@/lib/gym/selectors";
 import type { ActivityType } from "@/lib/gym/types";
 
@@ -105,6 +108,7 @@ function Dashboard() {
       expired: statuses.filter((s) => s === "expired").length,
       frozen: statuses.filter((s) => s === "frozen").length,
       revenue: totalRevenue(state),
+      cardRevenue: revenueForMetric(state, (state.settings.revenueCardMetric ?? "today") as RevenueMetric),
       monthRevenue: totalRevenue(state, monthStart),
       due: totalDue(state),
       series: revenueSeries(state, range),
@@ -141,9 +145,9 @@ function Dashboard() {
           search={{ filter: "active", q: "", page: 1 }}
         />
         <StatCard
-          label="Collected Revenue"
-          value={money(data.revenue, cur)}
-          hint={`${money(data.monthRevenue, cur)} this month`}
+          label={metricMeta((state.settings.revenueCardMetric ?? "today") as RevenueMetric).label}
+          value={money(data.cardRevenue, cur)}
+          hint={metricMeta((state.settings.revenueCardMetric ?? "today") as RevenueMetric).hint}
           icon={Wallet}
           tone="success"
           to="/payments"
@@ -257,13 +261,18 @@ function Dashboard() {
                   formatter={(v: string) => <span style={{ fontSize: 11 }}>{v}</span>}
                 />
                 <Tooltip
-                  contentStyle={{
-                    background: "var(--color-popover)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 12,
-                    fontSize: 12,
-                  }}
+                  cursor={false}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-xl border border-gold/60 bg-popover px-3.5 py-2.5 text-xs shadow-lg">
+                        <p className="font-semibold text-gold">{payload[0].name}</p>
+                        <p className="mt-0.5 font-medium text-gold/90">Members: {payload[0].value}</p>
+                      </div>
+                    ) : null
+                  }
                 />
+
+
               </PieChart>
             </ResponsiveContainer>
           </div>

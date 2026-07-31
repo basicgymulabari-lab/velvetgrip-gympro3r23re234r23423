@@ -9,6 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { REVENUE_METRICS, type RevenueMetric } from "@/lib/gym/selectors";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { exportBackup, resetData, restoreBackup, updateSettings, useGym } from "@/lib/gym/store";
 
@@ -121,6 +129,27 @@ function SettingsPage() {
                 }
               />
             </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            <Label>Dashboard revenue card</Label>
+            <Select
+              value={s.revenueCardMetric ?? "today"}
+              onValueChange={(v) => updateSettings({ revenueCardMetric: v as RevenueMetric })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REVENUE_METRICS.map((m) => (
+                  <SelectItem key={m.key} value={m.key}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Chooses which figure the revenue card on the dashboard shows.
+            </p>
           </div>
           <div className="mt-4 flex items-center justify-between rounded-xl border border-border bg-secondary/30 p-4">
             <div className="min-w-0 pr-4">

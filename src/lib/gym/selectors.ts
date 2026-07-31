@@ -310,3 +310,49 @@ export function buildNotifications(s: GymState): Notification[] {
 
   return list.sort((a, b) => +new Date(b.date) - +new Date(a.date));
 }
+
+/* ------------------------------------------------------------------ */
+/* Revenue card metric                                                 */
+/* ------------------------------------------------------------------ */
+
+export type RevenueMetric = "today" | "weekly" | "monthly" | "yearly" | "total";
+
+export const REVENUE_METRICS: Array<{ key: RevenueMetric; label: string; hint: string }> = [
+  { key: "today", label: "Today's Revenue", hint: "Today's earnings" },
+  { key: "weekly", label: "Weekly Revenue", hint: "This week's earnings" },
+  { key: "monthly", label: "Monthly Revenue", hint: "This month's earnings" },
+  { key: "yearly", label: "Yearly Revenue", hint: "This year's earnings" },
+  { key: "total", label: "Total Revenue", hint: "Lifetime earnings" },
+];
+
+export function metricStart(metric: RevenueMetric): Date | undefined {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  switch (metric) {
+    case "today":
+      return d;
+    case "weekly": {
+      const day = (d.getDay() + 6) % 7; // Monday start
+      d.setDate(d.getDate() - day);
+      return d;
+    }
+    case "monthly":
+      d.setDate(1);
+      return d;
+    case "yearly":
+      d.setMonth(0, 1);
+      return d;
+    default:
+      return undefined;
+  }
+}
+
+export function revenueForMetric(s: GymState, metric: RevenueMetric) {
+  return totalRevenue(s, metricStart(metric));
+}
+
+export const rangeToMetric = (r: Range): RevenueMetric =>
+  r === "daily" ? "today" : r === "weekly" ? "weekly" : r === "monthly" ? "monthly" : "yearly";
+
+export const metricMeta = (metric: RevenueMetric) =>
+  REVENUE_METRICS.find((m) => m.key === metric) ?? REVENUE_METRICS[0];

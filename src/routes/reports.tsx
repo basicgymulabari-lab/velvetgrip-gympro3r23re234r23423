@@ -23,9 +23,13 @@ import { useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
+  metricMeta,
+  metricStart,
   money,
   planDistribution,
   profitOfSales,
+  rangeToMetric,
+  revenueForMetric,
   revenueSeries,
   shortDate,
   statusOf,
@@ -133,9 +137,9 @@ function ReportsPage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Total revenue", money(totalRevenue(state), cur)],
+          [metricMeta(rangeToMetric(range)).label, money(revenueForMetric(state, rangeToMetric(range)), cur)],
           ["Pending dues", money(totalDue(state), cur)],
-          ["Product profit", money(profitOfSales(state), cur)],
+          ["Product profit", money(profitOfSales(state, metricStart(rangeToMetric(range))), cur)],
           ["Active members", String(statuses.active ?? 0)],
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-5">
@@ -144,6 +148,7 @@ function ReportsPage() {
           </div>
         ))}
       </div>
+
 
       <Panel title={`Revenue — ${range}`} className="mb-6">
         <div className="h-72 w-full">
@@ -184,13 +189,16 @@ function ReportsPage() {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{
-                    background: "#111111",
-                    border: "1px solid rgba(212,175,55,0.35)",
-                    borderRadius: 12,
-                    color: "#fff",
-                  }}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-xl border border-gold/60 bg-popover px-3.5 py-2.5 text-xs shadow-lg">
+                        <p className="font-semibold text-gold">{payload[0].name}</p>
+                        <p className="mt-0.5 font-medium text-gold/90">Members: {payload[0].value}</p>
+                      </div>
+                    ) : null
+                  }
                 />
+
               </PieChart>
             </ResponsiveContainer>
           </div>
