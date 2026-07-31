@@ -263,11 +263,16 @@ function Dashboard() {
                 <Tooltip
                   contentStyle={{
                     background: "var(--color-popover)",
-                    border: "1px solid var(--color-border)",
+                    border: "1px solid var(--color-gold)",
                     borderRadius: 12,
                     fontSize: 12,
+                    padding: "10px 14px",
                   }}
+                  labelStyle={{ color: "var(--color-gold)", fontWeight: 600, marginBottom: 4 }}
+                  itemStyle={{ color: "var(--color-gold)", fontWeight: 500 }}
+                  formatter={(v: number, n: string) => [`Members: ${v}`, n]}
                 />
+
               </PieChart>
             </ResponsiveContainer>
           </div>
