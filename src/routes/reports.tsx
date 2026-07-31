@@ -23,9 +23,13 @@ import { useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
+  metricMeta,
+  metricStart,
   money,
   planDistribution,
   profitOfSales,
+  rangeToMetric,
+  revenueForMetric,
   revenueSeries,
   shortDate,
   statusOf,
