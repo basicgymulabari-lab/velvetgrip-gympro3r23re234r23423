@@ -133,9 +133,9 @@ function ReportsPage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Total revenue", money(totalRevenue(state), cur)],
+          [metricMeta(rangeToMetric(range)).label, money(revenueForMetric(state, rangeToMetric(range)), cur)],
           ["Pending dues", money(totalDue(state), cur)],
-          ["Product profit", money(profitOfSales(state), cur)],
+          ["Product profit", money(profitOfSales(state, metricStart(rangeToMetric(range))), cur)],
           ["Active members", String(statuses.active ?? 0)],
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-5">
@@ -144,6 +144,7 @@ function ReportsPage() {
           </div>
         ))}
       </div>
+
 
       <Panel title={`Revenue — ${range}`} className="mb-6">
         <div className="h-72 w-full">
