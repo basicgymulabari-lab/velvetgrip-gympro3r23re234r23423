@@ -104,7 +104,15 @@ export function NotificationBell() {
         </div>
         <ScrollArea className="h-[420px]">
           <div className="space-y-4 p-2">
-            {(Object.keys(CATEGORY_META) as Array<keyof typeof CATEGORY_META>).map((cat) => {
+            {(() => {
+              const keys = Object.keys(CATEGORY_META) as Array<keyof typeof CATEGORY_META>;
+              const hasBirthdayToday = notifications.some(
+                (n) => n.category === "birthday" && n.description === "Birthday today",
+              );
+              return hasBirthdayToday
+                ? (["birthday", ...keys.filter((k) => k !== "birthday")] as typeof keys)
+                : keys;
+            })().map((cat) => {
               const items = notifications.filter((n) => n.category === cat).slice(0, 4);
               if (items.length === 0) return null;
               return (
