@@ -261,17 +261,17 @@ function Dashboard() {
                   formatter={(v: string) => <span style={{ fontSize: 11 }}>{v}</span>}
                 />
                 <Tooltip
-                  contentStyle={{
-                    background: "var(--color-popover)",
-                    border: "1px solid var(--color-gold)",
-                    borderRadius: 12,
-                    fontSize: 12,
-                    padding: "10px 14px",
-                  }}
-                  labelStyle={{ color: "var(--color-gold)", fontWeight: 600, marginBottom: 4 }}
-                  itemStyle={{ color: "var(--color-gold)", fontWeight: 500 }}
-                  formatter={(v: number, n: string) => [`Members: ${v}`, n]}
+                  cursor={false}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-xl border border-gold/60 bg-popover px-3.5 py-2.5 text-xs shadow-lg">
+                        <p className="font-semibold text-gold">{payload[0].name}</p>
+                        <p className="mt-0.5 font-medium text-gold/90">Members: {payload[0].value}</p>
+                      </div>
+                    ) : null
+                  }
                 />
+
 
               </PieChart>
             </ResponsiveContainer>
