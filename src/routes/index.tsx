@@ -37,16 +37,19 @@ import { useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
+  metricMeta,
   money,
   planDistribution,
   profitOfSales,
   relative,
+  revenueForMetric,
   revenueSeries,
   statusOf,
   topProducts,
   totalDue,
   totalRevenue,
   type Range,
+  type RevenueMetric,
 } from "@/lib/gym/selectors";
 import type { ActivityType } from "@/lib/gym/types";
 
