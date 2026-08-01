@@ -400,6 +400,12 @@ function MemberProfile() {
       />
       <NoteDialog open={noteOpen} onOpenChange={setNoteOpen} memberId={member.id} />
       <MeasurementDialog open={msrOpen} onOpenChange={setMsrOpen} memberId={member.id} />
+      <CollectBalanceDialog
+        membership={collectFor}
+        onClose={() => setCollectFor(null)}
+        memberName={member.name}
+      />
+      <InvoiceDialog invoice={invoice} settings={state.settings} onOpenChange={() => setInvoice(null)} />
     </>
   );
 }
