@@ -11,6 +11,8 @@ import {
   RefreshCw,
   Snowflake,
   Pencil,
+  Wallet,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -39,7 +41,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addMeasurement, addNote, renewMembership, toggleFreeze, useGym } from "@/lib/gym/store";
+import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
+import {
+  addMeasurement,
+  addNote,
+  addPayment,
+  renewMembership,
+  toggleFreeze,
+  useGym,
+} from "@/lib/gym/store";
 import {
   currentMembership,
   dueFor,
@@ -50,6 +60,7 @@ import {
   shortDate,
   statusOf,
 } from "@/lib/gym/selectors";
+import type { Membership, Payment } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/members/$memberId")({
   head: () => ({
