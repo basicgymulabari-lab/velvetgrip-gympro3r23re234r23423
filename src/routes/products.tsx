@@ -92,7 +92,7 @@ function ProductsPage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Products", String(state.products.length), Boxes],
+          ["Products", String(live.length), Boxes],
           ["Stock value", money(stockValue, cur), Boxes],
           ["Low stock", String(low.length), PackageX],
           ["Sales profit", money(profitOfSales(state), cur), ShoppingCart],
@@ -151,7 +151,12 @@ function ProductsPage() {
               <tbody>
                 {filtered.map((p) => (
                   <tr key={p.id} className="border-b border-border/50 hover:bg-secondary/40">
-                    <td className="py-3 font-medium">{p.name}</td>
+                    <td className="py-3 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {p.name}
+                        {p.locked && <Lock className="h-3.5 w-3.5 text-gold" aria-label="Locked" />}
+                      </span>
+                    </td>
                     <td className="py-3 text-muted-foreground">{p.category}</td>
                     <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
                     <td className="py-3 text-gold">{money(p.price, cur)}</td>
