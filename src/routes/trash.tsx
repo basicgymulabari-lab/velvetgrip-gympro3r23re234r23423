@@ -56,6 +56,7 @@ function TrashPage() {
 
   const items = useMemo(() => (state ? trashedMembers(state) : []), [state]);
   const plans = useMemo(() => (state ? trashedPlans(state) : []), [state]);
+  const products = useMemo(() => (state ? trashedProducts(state) : []), [state]);
   if (!state) return null;
 
   return (
@@ -195,6 +196,77 @@ function TrashPage() {
                             onClick={() => {
                               deletePlanPermanently(p.id);
                               toast.success("Plan permanently deleted");
+                            }}
+                          >
+                            <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete forever
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Deleted Products" className="mt-6">
+        {products.length === 0 ? (
+          <EmptyState title="No deleted products" hint="Products moved to Trash will appear here for 30 days." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <th className="py-3">Product</th>
+                  <th className="py-3">Price</th>
+                  <th className="py-3">Deleted on</th>
+                  <th className="py-3">Auto-purge in</th>
+                  <th className="py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((p) => {
+                  const purge = p.deletedAt
+                    ? daysUntil(new Date(+new Date(p.deletedAt) + 30 * 24 * 60 * 60 * 1000))
+                    : 30;
+                  return (
+                    <tr key={p.id} className="border-b border-border/50 hover:bg-secondary/40">
+                      <td className="py-3">
+                        <p className="font-medium">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.category}</p>
+                      </td>
+                      <td className="py-3 text-muted-foreground">
+                        {money(p.price, state.settings.currency)}
+                      </td>
+                      <td className="py-3 text-muted-foreground">
+                        {p.deletedAt ? shortDate(p.deletedAt) : "—"}
+                      </td>
+                      <td className="py-3">
+                        <span className={purge <= 5 ? "text-destructive" : "text-muted-foreground"}>
+                          {Math.max(0, purge)} days
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              restoreProduct(p.id);
+                              toast.success(`${p.name} restored`);
+                            }}
+                          >
+                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restore
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => {
+                              deleteProductPermanently(p.id);
+                              toast.success("Product permanently deleted");
                             }}
                           >
                             <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete forever
