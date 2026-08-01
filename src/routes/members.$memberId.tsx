@@ -93,6 +93,8 @@ function MemberProfile() {
   const [renewOpen, setRenewOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [msrOpen, setMsrOpen] = useState(false);
+  const [collectFor, setCollectFor] = useState<Membership | null>(null);
+  const [invoice, setInvoice] = useState<InvoiceData | null>(null);
 
   const member = state?.members.find((m) => m.id === memberId);
 
