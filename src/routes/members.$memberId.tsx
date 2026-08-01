@@ -410,6 +410,130 @@ function MemberProfile() {
   );
 }
 
+function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
+  return {
+    invoiceNo: p.invoiceNo,
+    date: p.date,
+    billedTo: name,
+    contact: phone,
+    lines: [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
+    paid: p.amount,
+    method: p.method,
+  };
+}
+
+function CollectBalanceDialog({
+  membership,
+  memberName,
+  onClose,
+}: {
+  membership: Membership | null;
+  memberName: string;
+  onClose: () => void;
+}) {
+  const state = useGym();
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<Payment["method"]>("cash");
+  const [note, setNote] = useState("");
+  const [seeded, setSeeded] = useState<string | null>(null);
+
+  if (!state || !membership) return null;
+  const cur = state.settings.currency;
+  const total = membership.price - membership.discount;
+  const paid = paidFor(state, membership.id);
+  const balance = Math.max(0, total - paid);
+  const plan = planOf(state, membership.planId);
+
+  if (seeded !== membership.id) {
+    setSeeded(membership.id);
+    setAmount(String(balance));
+    setMethod("cash");
+    setNote("");
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl tracking-wide">Collect Balance</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-4 text-sm">
+            <Row label="Member" value={memberName} />
+            <Row label="Plan" value={plan?.name ?? "—"} />
+            <Row label="Total price" value={money(total, cur)} />
+            <Row label="Already paid" value={money(paid, cur)} />
+            <div className="flex items-center justify-between border-t border-border pt-3">
+              <span className="text-muted-foreground">Remaining balance</span>
+              <span className="font-display text-xl text-warning">{money(balance, cur)}</span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Payment amount</Label>
+            <Input
+              type="number"
+              min={1}
+              max={balance}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Payment method</Label>
+            <Select value={method} onValueChange={(v) => setMethod(v as Payment["method"])}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="bank">Bank transfer</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
+                <SelectItem value="other">Other / UPI</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Note (optional)</Label>
+            <Input
+              value={note}
+              maxLength={120}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Balance payment"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const n = Number(amount);
+                if (Number.isNaN(n) || n <= 0) return toast.error("Enter an amount greater than zero");
+                if (n > balance) return toast.error("Payment cannot exceed the remaining balance");
+                addPayment({
+                  memberId: membership.memberId,
+                  membershipId: membership.id,
+                  amount: n,
+                  method,
+                  note: note.trim() || `${plan?.name ?? "Membership"} — balance payment`,
+                });
+                toast.success(
+                  n === balance ? "Payment complete — membership fully paid" : "Payment recorded",
+                );
+                setSeeded(null);
+                onClose();
+              }}
+            >
+              Complete payment
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function Info({ icon: Icon, value }: { icon: typeof Mail; value: string }) {
   return (
     <div className="flex items-start gap-3">
