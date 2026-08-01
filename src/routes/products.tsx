@@ -211,10 +211,7 @@ function ProductsPage() {
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           aria-label="Delete product"
-                          onClick={() => {
-                            deleteProduct(p.id);
-                            toast.success("Product deleted");
-                          }}
+                          onClick={() => (p.locked ? setLockedFor(p) : setTrashFor(p))}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
