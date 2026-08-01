@@ -420,6 +420,19 @@ function ProductDialog({
               />
             </div>
           </div>
+          <div className="flex items-center justify-between rounded-xl border border-border bg-secondary/30 p-4">
+            <div>
+              <Label className="text-sm">Lock this product</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Locked products cannot be moved to Trash.
+              </p>
+            </div>
+            <Switch
+              checked={form.locked}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, locked: v }))}
+              aria-label="Lock this product"
+            />
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
@@ -437,6 +450,8 @@ function ProductDialog({
                   price: Number(form.price),
                   stock: Number(form.stock) || 0,
                   lowStockAt: Number(form.lowStockAt) || 0,
+                  locked: form.locked,
+                  deletedAt: product?.deletedAt ?? null,
                 });
                 toast.success(product ? "Product updated" : "Product added");
                 onOpenChange(false);
