@@ -249,6 +249,56 @@ function ProductsPage() {
 
       <ProductDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
       <SellDialog product={sellFor} onClose={() => setSellFor(null)} />
+
+      <Dialog open={Boolean(trashFor)} onOpenChange={(v) => !v && setTrashFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">
+              Move this product to Trash?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This product will be moved to Trash. You can restore it within the next 30 days before it
+              is permanently deleted.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setTrashFor(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (trashFor) trashProduct(trashFor.id);
+                  toast.success("Product moved to Trash");
+                  setTrashFor(null);
+                }}
+              >
+                Move to Trash
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(lockedFor)} onOpenChange={(v) => !v && setLockedFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide text-warning">
+              This product is locked
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This product is protected and cannot be moved to Trash while it is locked. Please unlock
+              the product first if you want to delete it.
+            </p>
+            <div className="flex justify-end">
+              <Button onClick={() => setLockedFor(null)}>OK</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
