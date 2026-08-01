@@ -11,11 +11,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   deleteMemberPermanently,
   deletePlanPermanently,
+  deleteProductPermanently,
   restoreMember,
   restorePlan,
+  restoreProduct,
   useGym,
 } from "@/lib/gym/store";
-import { daysUntil, money, shortDate, trashedMembers, trashedPlans } from "@/lib/gym/selectors";
+import {
+  daysUntil,
+  money,
+  shortDate,
+  trashedMembers,
+  trashedPlans,
+  trashedProducts,
+} from "@/lib/gym/selectors";
 import type { Member } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/trash")({
