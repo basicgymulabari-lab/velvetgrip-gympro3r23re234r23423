@@ -224,6 +224,7 @@ function MemberProfile() {
                       <th className="py-3 text-right">Price</th>
                       <th className="py-3 text-right">Paid</th>
                       <th className="py-3 text-right">Balance</th>
+                      <th className="py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -238,7 +239,18 @@ function MemberProfile() {
                           </td>
                           <td className="py-3 text-right">{money(h.price - h.discount, cur)}</td>
                           <td className="py-3 text-right text-success">{money(paid, cur)}</td>
-                          <td className="py-3 text-right text-warning">{money(bal, cur)}</td>
+                          <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
+                            {money(bal, cur)}
+                          </td>
+                          <td className="py-3 text-right">
+                            {bal > 0 ? (
+                              <Button size="sm" variant="secondary" onClick={() => setCollectFor(h)}>
+                                <Wallet className="mr-1.5 h-3.5 w-3.5" /> Collect balance
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-success">Fully paid</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -261,6 +273,7 @@ function MemberProfile() {
                         <th className="py-3">Date</th>
                         <th className="py-3">Note</th>
                         <th className="py-3 text-right">Amount</th>
+                        <th className="py-3 text-right">Invoice</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -270,6 +283,17 @@ function MemberProfile() {
                           <td className="py-3 text-muted-foreground">{shortDate(p.date)}</td>
                           <td className="py-3 text-muted-foreground">{p.note}</td>
                           <td className="py-3 text-right">{money(p.amount, cur)}</td>
+                          <td className="py-3 text-right">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="View invoice"
+                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone))}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
