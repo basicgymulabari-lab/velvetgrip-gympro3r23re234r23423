@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Minus, ShoppingCart, PackageX, Boxes } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Minus, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
@@ -15,8 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { adjustStock, deleteProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
-import { activeMembers, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
+import { adjustStock, trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
+import { activeMembers, liveProducts, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
 import type { Product, ProductCategory } from "@/lib/gym/types";
 
 const CATEGORIES: ProductCategory[] = [
@@ -56,17 +57,20 @@ function ProductsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [sellFor, setSellFor] = useState<Product | null>(null);
+  const [trashFor, setTrashFor] = useState<Product | null>(null);
+  const [lockedFor, setLockedFor] = useState<Product | null>(null);
 
   const filtered = useMemo(() => {
     if (!state) return [];
     const t = q.trim().toLowerCase().slice(0, 60);
-    return state.products.filter((p) => !t || `${p.name} ${p.category}`.toLowerCase().includes(t));
+    return liveProducts(state).filter((p) => !t || `${p.name} ${p.category}`.toLowerCase().includes(t));
   }, [state, q]);
 
   if (!state) return null;
   const cur = state.settings.currency;
   const low = lowStock(state);
-  const stockValue = state.products.reduce((a, p) => a + p.stock * p.cost, 0);
+  const live = liveProducts(state);
+  const stockValue = live.reduce((a, p) => a + p.stock * p.cost, 0);
   const recentSales = [...state.sales].sort((a, b) => +new Date(b.date) - +new Date(a.date)).slice(0, 8);
 
   return (
@@ -88,7 +92,7 @@ function ProductsPage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Products", String(state.products.length), Boxes],
+          ["Products", String(live.length), Boxes],
           ["Stock value", money(stockValue, cur), Boxes],
           ["Low stock", String(low.length), PackageX],
           ["Sales profit", money(profitOfSales(state), cur), ShoppingCart],
@@ -147,7 +151,12 @@ function ProductsPage() {
               <tbody>
                 {filtered.map((p) => (
                   <tr key={p.id} className="border-b border-border/50 hover:bg-secondary/40">
-                    <td className="py-3 font-medium">{p.name}</td>
+                    <td className="py-3 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {p.name}
+                        {p.locked && <Lock className="h-3.5 w-3.5 text-gold" aria-label="Locked" />}
+                      </span>
+                    </td>
                     <td className="py-3 text-muted-foreground">{p.category}</td>
                     <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
                     <td className="py-3 text-gold">{money(p.price, cur)}</td>
@@ -202,10 +211,7 @@ function ProductsPage() {
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           aria-label="Delete product"
-                          onClick={() => {
-                            deleteProduct(p.id);
-                            toast.success("Product deleted");
-                          }}
+                          onClick={() => (p.locked ? setLockedFor(p) : setTrashFor(p))}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -243,6 +249,56 @@ function ProductsPage() {
 
       <ProductDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
       <SellDialog product={sellFor} onClose={() => setSellFor(null)} />
+
+      <Dialog open={Boolean(trashFor)} onOpenChange={(v) => !v && setTrashFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">
+              Move this product to Trash?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This product will be moved to Trash. You can restore it within the next 30 days before it
+              is permanently deleted.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setTrashFor(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (trashFor) trashProduct(trashFor.id);
+                  toast.success("Product moved to Trash");
+                  setTrashFor(null);
+                }}
+              >
+                Move to Trash
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(lockedFor)} onOpenChange={(v) => !v && setLockedFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide text-warning">
+              This product is locked
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This product is protected and cannot be moved to Trash while it is locked. Please unlock
+              the product first if you want to delete it.
+            </p>
+            <div className="flex justify-end">
+              <Button onClick={() => setLockedFor(null)}>OK</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -264,6 +320,7 @@ function ProductDialog({
     price: "",
     stock: "",
     lowStockAt: "5",
+    locked: false,
   });
 
   useMemo(() => {
@@ -276,6 +333,7 @@ function ProductDialog({
         price: product ? String(product.price) : "",
         stock: product ? String(product.stock) : "",
         lowStockAt: product ? String(product.lowStockAt) : "5",
+        locked: Boolean(product?.locked),
       });
     }
   }, [open, product]);
@@ -362,6 +420,19 @@ function ProductDialog({
               />
             </div>
           </div>
+          <div className="flex items-center justify-between rounded-xl border border-border bg-secondary/30 p-4">
+            <div>
+              <Label className="text-sm">Lock this product</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Locked products cannot be moved to Trash.
+              </p>
+            </div>
+            <Switch
+              checked={form.locked}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, locked: v }))}
+              aria-label="Lock this product"
+            />
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
@@ -379,6 +450,8 @@ function ProductDialog({
                   price: Number(form.price),
                   stock: Number(form.stock) || 0,
                   lowStockAt: Number(form.lowStockAt) || 0,
+                  locked: form.locked,
+                  deletedAt: product?.deletedAt ?? null,
                 });
                 toast.success(product ? "Product updated" : "Product added");
                 onOpenChange(false);

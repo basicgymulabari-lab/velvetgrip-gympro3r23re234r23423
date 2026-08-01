@@ -292,8 +292,11 @@ function purgeOldTrashedPlans() {
   if (!state) return;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const keep = state.plans.filter((p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff));
-  if (keep.length === state.plans.length) return;
-  state = { ...state, plans: keep };
+  const keepProducts = state.products.filter(
+    (p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
+  );
+  if (keep.length === state.plans.length && keepProducts.length === state.products.length) return;
+  state = { ...state, plans: keep, products: keepProducts };
   persist();
 }
 
@@ -483,6 +486,26 @@ export function saveProduct(product: Omit<Product, "id" | "createdAt"> & { id?: 
 }
 
 export function deleteProduct(id: string) {
+  trashProduct(id);
+}
+
+export function trashProduct(id: string) {
+  setState((st) => ({
+    ...st,
+    products: st.products.map((p) =>
+      p.id === id && !p.locked ? { ...p, deletedAt: iso(new Date()) } : p,
+    ),
+  }));
+}
+
+export function restoreProduct(id: string) {
+  setState((st) => ({
+    ...st,
+    products: st.products.map((p) => (p.id === id ? { ...p, deletedAt: null } : p)),
+  }));
+}
+
+export function deleteProductPermanently(id: string) {
   setState((st) => ({ ...st, products: st.products.filter((p) => p.id !== id) }));
 }
 

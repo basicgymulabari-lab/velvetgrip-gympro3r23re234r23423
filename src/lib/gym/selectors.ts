@@ -88,8 +88,11 @@ export function totalRevenue(s: GymState, from?: Date) {
     .reduce((sum, p) => sum + p.amount, 0);
 }
 
+export const liveProducts = (s: GymState) => s.products.filter((p) => !p.deletedAt);
+export const trashedProducts = (s: GymState) => s.products.filter((p) => p.deletedAt);
+
 export function lowStock(s: GymState): Product[] {
-  return s.products.filter((p) => p.stock <= p.lowStockAt);
+  return liveProducts(s).filter((p) => p.stock <= p.lowStockAt);
 }
 
 export function profitOfSales(s: GymState, from?: Date) {

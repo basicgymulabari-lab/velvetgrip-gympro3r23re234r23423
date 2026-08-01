@@ -94,6 +94,8 @@ export type Product = {
   stock: number;
   lowStockAt: number;
   createdAt: string;
+  locked?: boolean;
+  deletedAt?: string | null;
 };
 
 export type Sale = {

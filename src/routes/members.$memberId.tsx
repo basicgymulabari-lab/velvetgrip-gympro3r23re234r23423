@@ -11,6 +11,8 @@ import {
   RefreshCw,
   Snowflake,
   Pencil,
+  Wallet,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -39,7 +41,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addMeasurement, addNote, renewMembership, toggleFreeze, useGym } from "@/lib/gym/store";
+import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
+import {
+  addMeasurement,
+  addNote,
+  addPayment,
+  renewMembership,
+  toggleFreeze,
+  useGym,
+} from "@/lib/gym/store";
 import {
   currentMembership,
   dueFor,
@@ -50,6 +60,7 @@ import {
   shortDate,
   statusOf,
 } from "@/lib/gym/selectors";
+import type { Membership, Payment } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/members/$memberId")({
   head: () => ({
@@ -82,6 +93,8 @@ function MemberProfile() {
   const [renewOpen, setRenewOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [msrOpen, setMsrOpen] = useState(false);
+  const [collectFor, setCollectFor] = useState<Membership | null>(null);
+  const [invoice, setInvoice] = useState<InvoiceData | null>(null);
 
   const member = state?.members.find((m) => m.id === memberId);
 
@@ -211,6 +224,7 @@ function MemberProfile() {
                       <th className="py-3 text-right">Price</th>
                       <th className="py-3 text-right">Paid</th>
                       <th className="py-3 text-right">Balance</th>
+                      <th className="py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -225,7 +239,18 @@ function MemberProfile() {
                           </td>
                           <td className="py-3 text-right">{money(h.price - h.discount, cur)}</td>
                           <td className="py-3 text-right text-success">{money(paid, cur)}</td>
-                          <td className="py-3 text-right text-warning">{money(bal, cur)}</td>
+                          <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
+                            {money(bal, cur)}
+                          </td>
+                          <td className="py-3 text-right">
+                            {bal > 0 ? (
+                              <Button size="sm" variant="secondary" onClick={() => setCollectFor(h)}>
+                                <Wallet className="mr-1.5 h-3.5 w-3.5" /> Collect balance
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-success">Fully paid</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -248,6 +273,7 @@ function MemberProfile() {
                         <th className="py-3">Date</th>
                         <th className="py-3">Note</th>
                         <th className="py-3 text-right">Amount</th>
+                        <th className="py-3 text-right">Invoice</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -257,6 +283,17 @@ function MemberProfile() {
                           <td className="py-3 text-muted-foreground">{shortDate(p.date)}</td>
                           <td className="py-3 text-muted-foreground">{p.note}</td>
                           <td className="py-3 text-right">{money(p.amount, cur)}</td>
+                          <td className="py-3 text-right">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="View invoice"
+                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone))}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -363,7 +400,137 @@ function MemberProfile() {
       />
       <NoteDialog open={noteOpen} onOpenChange={setNoteOpen} memberId={member.id} />
       <MeasurementDialog open={msrOpen} onOpenChange={setMsrOpen} memberId={member.id} />
+      <CollectBalanceDialog
+        membership={collectFor}
+        onClose={() => setCollectFor(null)}
+        memberName={member.name}
+      />
+      <InvoiceDialog invoice={invoice} settings={state.settings} onOpenChange={() => setInvoice(null)} />
     </>
+  );
+}
+
+function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
+  return {
+    invoiceNo: p.invoiceNo,
+    date: p.date,
+    billedTo: name,
+    contact: phone,
+    lines: [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
+    paid: p.amount,
+    method: p.method,
+  };
+}
+
+function CollectBalanceDialog({
+  membership,
+  memberName,
+  onClose,
+}: {
+  membership: Membership | null;
+  memberName: string;
+  onClose: () => void;
+}) {
+  const state = useGym();
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<Payment["method"]>("cash");
+  const [note, setNote] = useState("");
+  const [seeded, setSeeded] = useState<string | null>(null);
+
+  if (!state || !membership) return null;
+  const cur = state.settings.currency;
+  const total = membership.price - membership.discount;
+  const paid = paidFor(state, membership.id);
+  const balance = Math.max(0, total - paid);
+  const plan = planOf(state, membership.planId);
+
+  if (seeded !== membership.id) {
+    setSeeded(membership.id);
+    setAmount(String(balance));
+    setMethod("cash");
+    setNote("");
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl tracking-wide">Collect Balance</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-4 text-sm">
+            <Row label="Member" value={memberName} />
+            <Row label="Plan" value={plan?.name ?? "—"} />
+            <Row label="Total price" value={money(total, cur)} />
+            <Row label="Already paid" value={money(paid, cur)} />
+            <div className="flex items-center justify-between border-t border-border pt-3">
+              <span className="text-muted-foreground">Remaining balance</span>
+              <span className="font-display text-xl text-warning">{money(balance, cur)}</span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Payment amount</Label>
+            <Input
+              type="number"
+              min={1}
+              max={balance}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Payment method</Label>
+            <Select value={method} onValueChange={(v) => setMethod(v as Payment["method"])}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="bank">Bank transfer</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
+                <SelectItem value="other">Other / UPI</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Note (optional)</Label>
+            <Input
+              value={note}
+              maxLength={120}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Balance payment"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const n = Number(amount);
+                if (Number.isNaN(n) || n <= 0) return toast.error("Enter an amount greater than zero");
+                if (n > balance) return toast.error("Payment cannot exceed the remaining balance");
+                addPayment({
+                  memberId: membership.memberId,
+                  membershipId: membership.id,
+                  amount: n,
+                  method,
+                  note: note.trim() || `${plan?.name ?? "Membership"} — balance payment`,
+                });
+                toast.success(
+                  n === balance ? "Payment complete — membership fully paid" : "Payment recorded",
+                );
+                setSeeded(null);
+                onClose();
+              }}
+            >
+              Complete payment
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
