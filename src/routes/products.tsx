@@ -320,6 +320,7 @@ function ProductDialog({
     price: "",
     stock: "",
     lowStockAt: "5",
+    locked: false,
   });
 
   useMemo(() => {
@@ -332,6 +333,7 @@ function ProductDialog({
         price: product ? String(product.price) : "",
         stock: product ? String(product.stock) : "",
         lowStockAt: product ? String(product.lowStockAt) : "5",
+        locked: Boolean(product?.locked),
       });
     }
   }, [open, product]);
