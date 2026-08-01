@@ -57,17 +57,20 @@ function ProductsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [sellFor, setSellFor] = useState<Product | null>(null);
+  const [trashFor, setTrashFor] = useState<Product | null>(null);
+  const [lockedFor, setLockedFor] = useState<Product | null>(null);
 
   const filtered = useMemo(() => {
     if (!state) return [];
     const t = q.trim().toLowerCase().slice(0, 60);
-    return state.products.filter((p) => !t || `${p.name} ${p.category}`.toLowerCase().includes(t));
+    return liveProducts(state).filter((p) => !t || `${p.name} ${p.category}`.toLowerCase().includes(t));
   }, [state, q]);
 
   if (!state) return null;
   const cur = state.settings.currency;
   const low = lowStock(state);
-  const stockValue = state.products.reduce((a, p) => a + p.stock * p.cost, 0);
+  const live = liveProducts(state);
+  const stockValue = live.reduce((a, p) => a + p.stock * p.cost, 0);
   const recentSales = [...state.sales].sort((a, b) => +new Date(b.date) - +new Date(a.date)).slice(0, 8);
 
   return (
