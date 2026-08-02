@@ -470,21 +470,100 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const state = useGym();
   const [qty, setQty] = useState("1");
   const [memberId, setMemberId] = useState("walkin");
+  const [discountType, setDiscountType] = useState<"none" | "percent" | "fixed">("none");
+  const [discountValue, setDiscountValue] = useState("");
+  const [walkName, setWalkName] = useState("");
+  const [walkPhone, setWalkPhone] = useState("");
+  const [walkEmail, setWalkEmail] = useState("");
+  const [walkAddress, setWalkAddress] = useState("");
 
   if (!state || !product) return null;
-  const n = Number(qty) || 0;
+  const cur = state.settings.currency;
+  const n = Number(qty);
+  const qtyValid = Number.isInteger(n) && n >= 1 && n <= product.stock;
+  const gross = product.price * (qtyValid ? n : 0);
+  const rawDiscount =
+    discountType === "none"
+      ? 0
+      : discountType === "percent"
+        ? (gross * (Number(discountValue) || 0)) / 100
+        : Number(discountValue) || 0;
+  const discountAmount = Math.min(Math.max(0, Math.round(rawDiscount)), gross);
+  const discountValid =
+    discountType === "none" ||
+    (discountValue !== "" &&
+      Number.isFinite(Number(discountValue)) &&
+      Number(discountValue) >= 0 &&
+      (discountType === "percent" ? Number(discountValue) <= 100 : Number(discountValue) <= gross));
+  const total = gross - discountAmount;
+  const isWalkIn = memberId === "walkin";
+  const walkInValid =
+    !isWalkIn || (walkName.trim().length >= 2 && walkPhone.trim().replace(/\D/g, "").length >= 8);
+
+  const reset = () => {
+    setQty("1");
+    setDiscountType("none");
+    setDiscountValue("");
+    setMemberId("walkin");
+    setWalkName("");
+    setWalkPhone("");
+    setWalkEmail("");
+    setWalkAddress("");
+  };
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-2xl tracking-wide">Sell {product.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Quantity (in stock: {product.stock})</Label>
-            <Input type="number" min={1} max={product.stock} value={qty} onChange={(e) => setQty(e.target.value)} />
+            <Input
+              type="number"
+              min={1}
+              max={product.stock}
+              step={1}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
+            {!qtyValid && (
+              <p className="text-xs text-destructive">
+                Enter a whole quantity between 1 and {product.stock}.
+              </p>
+            )}
           </div>
+          <div className="space-y-2">
+            <Label>Discount type</Label>
+            <Select
+              value={discountType}
+              onValueChange={(v) => setDiscountType(v as "none" | "percent" | "fixed")}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No discount</SelectItem>
+                <SelectItem value="percent">Percentage (%)</SelectItem>
+                <SelectItem value="fixed">Fixed amount ({cur})</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {discountType !== "none" && (
+            <div className="space-y-2">
+              <Label>{discountType === "percent" ? "Discount (%)" : `Discount (${cur})`}</Label>
+              <Input
+                type="number"
+                min={0}
+                max={discountType === "percent" ? 100 : gross}
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                placeholder="0"
+              />
+              {!discountValid && <p className="text-xs text-destructive">Enter a valid discount.</p>}
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Buyer</Label>
             <Select value={memberId} onValueChange={setMemberId}>
@@ -501,23 +580,66 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
               </SelectContent>
             </Select>
           </div>
+          {isWalkIn && (
+            <div className="grid gap-4 rounded-xl border border-gold/25 bg-secondary/30 p-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Customer name</Label>
+                <Input value={walkName} onChange={(e) => setWalkName(e.target.value)} maxLength={80} />
+              </div>
+              <div className="space-y-2">
+                <Label>Mobile number</Label>
+                <Input value={walkPhone} onChange={(e) => setWalkPhone(e.target.value)} maxLength={20} />
+              </div>
+              <div className="space-y-2">
+                <Label>Email (optional)</Label>
+                <Input value={walkEmail} onChange={(e) => setWalkEmail(e.target.value)} maxLength={120} />
+              </div>
+              <div className="space-y-2">
+                <Label>Address (optional)</Label>
+                <Input
+                  value={walkAddress}
+                  onChange={(e) => setWalkAddress(e.target.value)}
+                  maxLength={200}
+                />
+              </div>
+              {!walkInValid && (
+                <p className="text-xs text-destructive sm:col-span-2">
+                  Customer name and a valid mobile number are required.
+                </p>
+              )}
+            </div>
+          )}
+          {discountAmount > 0 && (
+            <p className="text-sm text-muted-foreground">
+              Subtotal: {money(gross, cur)} · Discount: - {money(discountAmount, cur)}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
-            Total:{" "}
-            <span className="font-display text-xl text-gold">
-              {money(product.price * n, state.settings.currency)}
-            </span>
+            Total: <span className="font-display text-xl text-gold">{money(total, cur)}</span>
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
               Cancel
             </Button>
             <Button
+              disabled={!qtyValid || !discountValid || !walkInValid}
               onClick={() => {
-                if (n < 1 || n > product.stock) return toast.error("Enter a valid quantity");
-                const member = memberId === "walkin" ? null : activeMembers(state).find((m) => m.id === memberId);
-                sellProduct(product.id, n, member?.name ?? "Walk-in customer", member?.id ?? null);
+                if (!qtyValid) return toast.error("Enter a valid quantity");
+                const member = isWalkIn ? null : activeMembers(state).find((m) => m.id === memberId);
+                sellProduct(
+                  product.id,
+                  n,
+                  member?.name ?? (walkName.trim() || "Walk-in customer"),
+                  member?.id ?? null,
+                  {
+                    discount: discountAmount,
+                    buyerPhone: member?.phone ?? walkPhone.trim() || undefined,
+                    buyerEmail: member?.email ?? walkEmail.trim() || undefined,
+                    buyerAddress: member?.address ?? walkAddress.trim() || undefined,
+                  },
+                );
                 toast.success("Sale recorded");
-                setQty("1");
+                reset();
                 onClose();
               }}
             >
