@@ -277,15 +277,80 @@ export function MemberFormDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              <Field label="Discount type">
+                <Select
+                  value={form.discountType}
+                  onValueChange={(v) => set("discountType", v as FormState["discountType"])}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No discount</SelectItem>
+                    <SelectItem value="percent">Percentage (%)</SelectItem>
+                    <SelectItem value="fixed">Fixed amount ({cur})</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {form.discountType !== "none" && (
+                <Field
+                  label={form.discountType === "percent" ? "Discount (%)" : `Discount (${cur})`}
+                  error={errors.discount}
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    max={form.discountType === "percent" ? 100 : originalPrice}
+                    value={form.discountValue}
+                    onChange={(e) => set("discountValue", e.target.value)}
+                    placeholder="0"
+                  />
+                </Field>
+              )}
+              {form.planId && (
+                <div className="space-y-1 rounded-lg border border-border bg-background/40 p-3 text-sm sm:col-span-2">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Original price</span>
+                    <span className="text-foreground">
+                      {cur}
+                      {originalPrice.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Discount</span>
+                    <span className="text-foreground">
+                      - {cur}
+                      {discountAmount.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>Final payable</span>
+                    <span className="text-gold">
+                      {cur}
+                      {finalPrice.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Remaining balance</span>
+                    <span className="text-foreground">
+                      {cur}
+                      {remainingBalance.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              )}
               <Field label="Amount paid now" error={errors.paidNow}>
                 <Input
                   type="number"
                   min={0}
+                  max={finalPrice}
+                  step="1"
                   value={form.paidNow}
                   onChange={(e) => set("paidNow", e.target.value)}
                   placeholder="0"
                 />
               </Field>
+
             </div>
           )}
 
