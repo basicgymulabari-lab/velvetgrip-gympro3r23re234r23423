@@ -565,13 +565,41 @@ export function RenewDialog({
 }) {
   const state = useGym();
   const [planId, setPlanId] = useState("");
+  const [discountType, setDiscountType] = useState<"none" | "percent" | "fixed">("none");
+  const [discountValue, setDiscountValue] = useState("");
   const [paid, setPaid] = useState("");
   if (!state) return null;
   const plan = state.plans.find((p) => p.id === planId);
+  const cur = state.settings.currency;
+  const originalPrice = plan?.price ?? 0;
+  const rawDiscount =
+    discountType === "none"
+      ? 0
+      : discountType === "percent"
+        ? (originalPrice * (Number(discountValue) || 0)) / 100
+        : Number(discountValue) || 0;
+  const discountAmount = Math.min(Math.max(0, Math.round(rawDiscount)), originalPrice);
+  const finalPrice = originalPrice - discountAmount;
+  const paidNum = Number(paid || 0);
+  const paidValid = paid === "" || (Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= finalPrice);
+  const discountValid =
+    discountType === "none" ||
+    (discountValue !== "" &&
+      Number.isFinite(Number(discountValue)) &&
+      Number(discountValue) >= 0 &&
+      (discountType === "percent" ? Number(discountValue) <= 100 : Number(discountValue) <= originalPrice));
+  const remaining = Math.max(0, finalPrice - (paid === "" ? 0 : paidNum));
+
+  const reset = () => {
+    setPlanId("");
+    setPaid("");
+    setDiscountType("none");
+    setDiscountValue("");
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-2xl tracking-wide">Renew Membership</DialogTitle>
         </DialogHeader>
@@ -585,39 +613,82 @@ export function RenewDialog({
               <SelectContent>
                 {state.plans.filter((p) => !p.deletedAt).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
-                    {p.name} — {money(p.price, state.settings.currency)} / {p.durationDays} days
+                    {p.name} — {money(p.price, cur)} / {p.durationDays} days
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
+            <Label>Discount type</Label>
+            <Select
+              value={discountType}
+              onValueChange={(v) => setDiscountType(v as "none" | "percent" | "fixed")}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No discount</SelectItem>
+                <SelectItem value="percent">Percentage (%)</SelectItem>
+                <SelectItem value="fixed">Fixed amount ({cur})</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {discountType !== "none" && (
+            <div className="space-y-2">
+              <Label>{discountType === "percent" ? "Discount (%)" : `Discount (${cur})`}</Label>
+              <Input
+                type="number"
+                min={0}
+                max={discountType === "percent" ? 100 : originalPrice}
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                placeholder="0"
+              />
+              {!discountValid && <p className="text-xs text-destructive">Enter a valid discount.</p>}
+            </div>
+          )}
+          {plan && (
+            <div className="space-y-1 rounded-lg border border-border bg-background/40 p-3 text-sm">
+              <Row label="Original price" value={money(originalPrice, cur)} />
+              <Row label="Discount" value={`- ${money(discountAmount, cur)}`} />
+              <Row label="Final payable" value={money(finalPrice, cur)} />
+              <Row label="Remaining balance" value={money(remaining, cur)} />
+            </div>
+          )}
+          <div className="space-y-2">
             <Label>Amount collected now</Label>
             <Input
               type="number"
               min={0}
+              max={finalPrice}
               value={paid}
               onChange={(e) => setPaid(e.target.value)}
-              placeholder={plan ? String(plan.price) : "0"}
+              placeholder={plan ? String(finalPrice) : "0"}
             />
+            {!paidValid && (
+              <p className="text-xs text-destructive">
+                Amount collected cannot exceed the final payable amount ({money(finalPrice, cur)}).
+              </p>
+            )}
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
-              disabled={!planId}
+              disabled={!planId || !paidValid || !discountValid}
               onClick={() => {
                 const amount = Number(paid || 0);
-                if (amount < 0 || Number.isNaN(amount)) {
+                if (!Number.isFinite(amount) || amount < 0 || amount > finalPrice) {
                   toast.error("Enter a valid amount");
                   return;
                 }
-                renewMembership(memberId, planId, amount);
+                renewMembership(memberId, planId, amount, discountAmount);
                 toast.success("Membership renewed");
                 onOpenChange(false);
-                setPlanId("");
-                setPaid("");
+                reset();
                 onDone?.();
               }}
             >
