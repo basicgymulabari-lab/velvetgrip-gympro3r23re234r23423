@@ -179,17 +179,30 @@ function PaymentsPage() {
                         size="icon"
                         className="h-8 w-8"
                         aria-label="Print invoice"
-                        onClick={() =>
+                        onClick={() => {
+                          const sale = p.saleId
+                            ? state.sales.find((s) => s.id === p.saleId)
+                            : undefined;
                           setInvoice({
                             invoiceNo: p.invoiceNo,
                             date: p.date,
                             billedTo: p.who,
-                            contact: memberOf(state, p.memberId)?.phone,
-                            lines: [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
+                            contact: memberOf(state, p.memberId)?.phone ?? sale?.buyerPhone,
+                            lines: sale
+                              ? [
+                                  {
+                                    description: sale.productName,
+                                    qty: sale.qty,
+                                    rate: sale.unitPrice,
+                                  },
+                                ]
+                              : [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
+                            discount: sale?.discount ?? 0,
                             paid: p.amount,
                             method: p.method,
-                          })
-                        }
+                          });
+                        }}
+
                       >
                         <Printer className="h-4 w-4" />
                       </Button>
