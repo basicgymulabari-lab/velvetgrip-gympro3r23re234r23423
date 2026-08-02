@@ -633,9 +633,9 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
                   member?.id ?? null,
                   {
                     discount: discountAmount,
-                    buyerPhone: member?.phone ?? walkPhone.trim() || undefined,
-                    buyerEmail: member?.email ?? walkEmail.trim() || undefined,
-                    buyerAddress: member?.address ?? walkAddress.trim() || undefined,
+                    buyerPhone: member?.phone ?? (walkPhone.trim() || undefined),
+                    buyerEmail: member?.email ?? (walkEmail.trim() || undefined),
+                    buyerAddress: member?.address ?? (walkAddress.trim() || undefined),
                   },
                 );
                 toast.success("Sale recorded");
