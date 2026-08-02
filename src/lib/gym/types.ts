@@ -106,8 +106,13 @@ export type Sale = {
   qty: number;
   unitPrice: number;
   unitCost: number;
+  /** Discount applied to the sale, in currency units. */
+  discount?: number;
   total: number;
   buyer: string;
+  buyerPhone?: string;
+  buyerEmail?: string;
+  buyerAddress?: string;
   memberId?: ID | null;
   date: string;
 };
