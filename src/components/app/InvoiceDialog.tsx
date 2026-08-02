@@ -11,6 +11,7 @@ export type InvoiceData = {
   billedTo: string;
   contact?: string;
   lines: Array<{ description: string; qty: number; rate: number }>;
+  discount?: number;
   paid: number;
   method?: string;
 };
@@ -25,7 +26,9 @@ export function InvoiceDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   if (!invoice) return null;
-  const total = invoice.lines.reduce((s, l) => s + l.qty * l.rate, 0);
+  const gross = invoice.lines.reduce((s, l) => s + l.qty * l.rate, 0);
+  const discount = Math.min(Math.max(0, invoice.discount ?? 0), gross);
+  const total = gross - discount;
   const due = Math.max(0, total - invoice.paid);
 
   return (
@@ -84,7 +87,13 @@ export function InvoiceDialog({
           </table>
 
           <div className="ml-auto mt-4 w-full max-w-xs space-y-1.5 text-sm">
-            <Row label="Total" value={money(total, settings.currency)} />
+            {discount > 0 && (
+              <>
+                <Row label="Original amount" value={money(gross, settings.currency)} />
+                <Row label="Discount" value={`- ${money(discount, settings.currency)}`} />
+              </>
+            )}
+            <Row label={discount > 0 ? "Final amount" : "Total"} value={money(total, settings.currency)} />
             <Row label="Paid" value={money(invoice.paid, settings.currency)} />
             <div className="flex justify-between border-t border-border pt-2 font-display text-lg">
               <span>Balance due</span>

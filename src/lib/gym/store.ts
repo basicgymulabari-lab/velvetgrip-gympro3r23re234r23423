@@ -152,7 +152,7 @@ function nextInvoice(st: GymState): [GymState, string] {
 export type NewMemberInput = Omit<
   Member,
   "id" | "notes" | "measurements" | "deletedAt" | "deletedBy" | "joinDate"
-> & { joinDate?: string; planId?: string; startDate?: string; paidNow?: number };
+> & { joinDate?: string; planId?: string; startDate?: string; paidNow?: number; discount?: number };
 
 export function addMember(input: NewMemberInput) {
   setState((st) => {
@@ -189,7 +189,7 @@ export function addMember(input: NewMemberInput) {
           startDate: iso(start),
           endDate: iso(end),
           price: plan.price,
-          discount: 0,
+          discount: Math.min(Math.max(0, Math.round(input.discount ?? 0)), plan.price),
           frozen: false,
           createdAt: iso(new Date()),
         };
@@ -364,7 +364,12 @@ export function deletePlanPermanently(id: string) {
   setState((st) => ({ ...st, plans: st.plans.filter((p) => p.id !== id) }));
 }
 
-export function renewMembership(memberId: string, planId: string, paidNow: number) {
+export function renewMembership(
+  memberId: string,
+  planId: string,
+  paidNow: number,
+  discount = 0,
+) {
   setState((st) => {
     const plan = st.plans.find((p) => p.id === planId);
     const member = st.members.find((m) => m.id === memberId);
@@ -382,7 +387,7 @@ export function renewMembership(memberId: string, planId: string, paidNow: numbe
       startDate: iso(base),
       endDate: iso(end),
       price: plan.price,
-      discount: 0,
+      discount: Math.min(Math.max(0, Math.round(discount)), plan.price),
       frozen: false,
       createdAt: iso(new Date()),
     };
@@ -516,10 +521,23 @@ export function adjustStock(id: string, delta: number) {
   }));
 }
 
-export function sellProduct(productId: string, qty: number, buyer: string, memberId?: string | null) {
+export function sellProduct(
+  productId: string,
+  qty: number,
+  buyer: string,
+  memberId?: string | null,
+  extra?: {
+    discount?: number;
+    buyerPhone?: string;
+    buyerEmail?: string;
+    buyerAddress?: string;
+  },
+) {
   setState((st) => {
     const product = st.products.find((p) => p.id === productId);
-    if (!product || qty <= 0 || product.stock < qty) return st;
+    if (!product || qty <= 0 || !Number.isInteger(qty) || product.stock < qty) return st;
+    const gross = product.price * qty;
+    const discount = Math.min(Math.max(0, Math.round(extra?.discount ?? 0)), gross);
     const [withSeq, invoiceNo] = nextInvoice(st);
     const sale: Sale = {
       id: uid("sale"),
@@ -529,8 +547,12 @@ export function sellProduct(productId: string, qty: number, buyer: string, membe
       qty,
       unitPrice: product.price,
       unitCost: product.cost,
-      total: product.price * qty,
+      discount,
+      total: gross - discount,
       buyer: buyer || "Walk-in customer",
+      buyerPhone: extra?.buyerPhone,
+      buyerEmail: extra?.buyerEmail,
+      buyerAddress: extra?.buyerAddress,
       memberId: memberId ?? null,
       date: iso(new Date()),
     };

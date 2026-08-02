@@ -32,6 +32,8 @@ type FormState = {
   emergencyContact: string;
   photo: string | null;
   planId: string;
+  discountType: "none" | "percent" | "fixed";
+  discountValue: string;
   paidNow: string;
 };
 
@@ -45,6 +47,8 @@ const empty: FormState = {
   emergencyContact: "",
   photo: null,
   planId: "",
+  discountType: "none",
+  discountValue: "",
   paidNow: "",
 };
 
@@ -77,6 +81,8 @@ export function MemberFormDialog({
             emergencyContact: member.emergencyContact,
             photo: member.photo ?? null,
             planId: "",
+            discountType: "none",
+            discountValue: "",
             paidNow: "",
           }
         : { ...empty, planId: state?.plans.filter((p) => !p.deletedAt)[0]?.id ?? "" },
@@ -87,6 +93,20 @@ export function MemberFormDialog({
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  const selectedPlan = state.plans.find((p) => p.id === form.planId && !p.deletedAt) ?? null;
+  const originalPrice = selectedPlan?.price ?? 0;
+  const rawDiscount =
+    form.discountType === "none"
+      ? 0
+      : form.discountType === "percent"
+        ? (originalPrice * (Number(form.discountValue) || 0)) / 100
+        : Number(form.discountValue) || 0;
+  const discountAmount = Math.min(Math.max(0, Math.round(rawDiscount)), originalPrice);
+  const finalPrice = originalPrice - discountAmount;
+  const paidNowNum = Number(form.paidNow || 0);
+  const remainingBalance = Math.max(0, finalPrice - (Number.isFinite(paidNowNum) ? paidNowNum : 0));
+  const cur = state.settings.currency;
+
   const validate = () => {
     const e: Record<string, string> = {};
     if (form.name.trim().length < 2) e.name = "Name must be at least 2 characters.";
@@ -96,8 +116,24 @@ export function MemberFormDialog({
     if (!form.dob) e.dob = "Date of birth is required.";
     else if (new Date(form.dob) > new Date()) e.dob = "Date of birth cannot be in the future.";
     if (form.address.trim().length > 200) e.address = "Address is too long.";
-    const paid = Number(form.paidNow || 0);
-    if (form.paidNow && (Number.isNaN(paid) || paid < 0)) e.paidNow = "Enter a valid amount.";
+    if (!member) {
+      if (form.discountType !== "none") {
+        const dv = Number(form.discountValue);
+        if (form.discountValue === "" || Number.isNaN(dv) || dv < 0)
+          e.discount = "Enter a valid discount.";
+        else if (form.discountType === "percent" && dv > 100)
+          e.discount = "Percentage discount cannot exceed 100%.";
+        else if (form.discountType === "fixed" && dv > originalPrice)
+          e.discount = `Discount cannot exceed the plan price (${cur}${originalPrice.toLocaleString("en-IN")}).`;
+      }
+      const paid = Number(form.paidNow);
+      if (form.paidNow !== "") {
+        if (Number.isNaN(paid) || !Number.isFinite(paid)) e.paidNow = "Enter a valid amount.";
+        else if (paid < 0) e.paidNow = "Amount cannot be negative.";
+        else if (form.planId && paid > finalPrice)
+          e.paidNow = `Amount paid cannot exceed the final payable amount (${cur}${finalPrice.toLocaleString("en-IN")}).`;
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -133,7 +169,8 @@ export function MemberFormDialog({
       addMember({
         ...payload,
         planId: form.planId || undefined,
-        paidNow: Number(form.paidNow || 0),
+        discount: form.planId ? discountAmount : 0,
+        paidNow: Math.min(Number(form.paidNow || 0), form.planId ? finalPrice : 0),
       });
       toast.success(`${payload.name} added to the roster`);
     }
@@ -240,15 +277,80 @@ export function MemberFormDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              <Field label="Discount type">
+                <Select
+                  value={form.discountType}
+                  onValueChange={(v) => set("discountType", v as FormState["discountType"])}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No discount</SelectItem>
+                    <SelectItem value="percent">Percentage (%)</SelectItem>
+                    <SelectItem value="fixed">Fixed amount ({cur})</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {form.discountType !== "none" && (
+                <Field
+                  label={form.discountType === "percent" ? "Discount (%)" : `Discount (${cur})`}
+                  error={errors.discount}
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    max={form.discountType === "percent" ? 100 : originalPrice}
+                    value={form.discountValue}
+                    onChange={(e) => set("discountValue", e.target.value)}
+                    placeholder="0"
+                  />
+                </Field>
+              )}
+              {form.planId && (
+                <div className="space-y-1 rounded-lg border border-border bg-background/40 p-3 text-sm sm:col-span-2">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Original price</span>
+                    <span className="text-foreground">
+                      {cur}
+                      {originalPrice.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Discount</span>
+                    <span className="text-foreground">
+                      - {cur}
+                      {discountAmount.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>Final payable</span>
+                    <span className="text-gold">
+                      {cur}
+                      {finalPrice.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Remaining balance</span>
+                    <span className="text-foreground">
+                      {cur}
+                      {remainingBalance.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              )}
               <Field label="Amount paid now" error={errors.paidNow}>
                 <Input
                   type="number"
                   min={0}
+                  max={finalPrice}
+                  step="1"
                   value={form.paidNow}
                   onChange={(e) => set("paidNow", e.target.value)}
                   placeholder="0"
                 />
               </Field>
+
             </div>
           )}
 
