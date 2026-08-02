@@ -11,6 +11,7 @@ export type InvoiceData = {
   billedTo: string;
   contact?: string;
   lines: Array<{ description: string; qty: number; rate: number }>;
+  discount?: number;
   paid: number;
   method?: string;
 };
@@ -25,7 +26,9 @@ export function InvoiceDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   if (!invoice) return null;
-  const total = invoice.lines.reduce((s, l) => s + l.qty * l.rate, 0);
+  const gross = invoice.lines.reduce((s, l) => s + l.qty * l.rate, 0);
+  const discount = Math.min(Math.max(0, invoice.discount ?? 0), gross);
+  const total = gross - discount;
   const due = Math.max(0, total - invoice.paid);
 
   return (
