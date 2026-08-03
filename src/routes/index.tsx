@@ -91,6 +91,15 @@ const ACTIVITY_ICON: Record<ActivityType, typeof UserPlus> = {
 
 const RANGES: Range[] = ["daily", "weekly", "monthly", "yearly"];
 
+/** Muted premium palette: gold, emerald, sky, slate, soft orange. */
+const PLAN_COLORS = [
+  "oklch(0.775 0.128 87.5)",
+  "oklch(0.68 0.11 160)",
+  "oklch(0.68 0.09 235)",
+  "oklch(0.6 0.02 250)",
+  "oklch(0.72 0.115 55)",
+];
+
 function Dashboard() {
   const state = useGym();
   const [range, setRange] = useState<Range>("monthly");
