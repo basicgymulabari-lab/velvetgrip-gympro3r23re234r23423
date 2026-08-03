@@ -300,7 +300,7 @@ export function MemberFormDialog({
               {form.discountType !== "none" && (
                 <Field
                   label={form.discountType === "percent" ? "Discount (%)" : `Discount (${cur})`}
-                  error={errors.discount}
+                  error={liveDiscountError || errors.discount}
                 >
                   <Input
                     type="number"
@@ -344,7 +344,7 @@ export function MemberFormDialog({
                   </div>
                 </div>
               )}
-              <Field label="Amount paid now" error={errors.paidNow}>
+              <Field label="Amount paid now" error={livePaidError || errors.paidNow}>
                 <Input
                   type="number"
                   min={0}
