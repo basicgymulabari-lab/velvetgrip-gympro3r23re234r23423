@@ -417,7 +417,26 @@ function MemberProfile() {
   );
 }
 
-function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
+function invoiceOf(
+  p: Payment,
+  name: string,
+  phone: string | undefined,
+  state: GymState,
+): InvoiceData {
+  const ms = p.membershipId ? state.memberships.find((m) => m.id === p.membershipId) : null;
+  if (ms) {
+    const plan = planOf(state, ms.planId);
+    return {
+      invoiceNo: p.invoiceNo,
+      date: p.date,
+      billedTo: name,
+      contact: phone,
+      lines: [{ description: `${plan?.name ?? "Membership"} membership`, qty: 1, rate: ms.price }],
+      discount: ms.discount,
+      paid: paidFor(state, ms.id),
+      method: p.method,
+    };
+  }
   return {
     invoiceNo: p.invoiceNo,
     date: p.date,
@@ -428,6 +447,7 @@ function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
     method: p.method,
   };
 }
+
 
 function CollectBalanceDialog({
   membership,
