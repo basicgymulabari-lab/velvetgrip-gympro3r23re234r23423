@@ -476,6 +476,7 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const [walkPhone, setWalkPhone] = useState("");
   const [walkEmail, setWalkEmail] = useState("");
   const [walkAddress, setWalkAddress] = useState("");
+  const [buyerQuery, setBuyerQuery] = useState("");
 
   if (!state || !product) return null;
   const cur = state.settings.currency;
@@ -499,8 +500,6 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const isWalkIn = memberId === "walkin";
   const walkInValid =
     !isWalkIn || (walkName.trim().length >= 2 && walkPhone.trim().replace(/\D/g, "").length >= 8);
-
-  const [buyerQuery, setBuyerQuery] = useState("");
 
   const reset = () => {
     setQty("1");
