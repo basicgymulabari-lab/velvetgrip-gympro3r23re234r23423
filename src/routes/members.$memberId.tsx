@@ -58,6 +58,7 @@ import {
   paidFor,
   planOf,
   shortDate,
+  compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
 import type { GymState, Membership, Payment } from "@/lib/gym/types";
