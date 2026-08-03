@@ -15,6 +15,29 @@ export const money = (n: number, currency = "₹") =>
 export const shortDate = (d: string | Date) =>
   new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
+const MONTHS_3 = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** Compact date: 03 Aug 26 */
+export const compactDate = (d: string | Date) => {
+  const dt = new Date(d);
+  return `${String(dt.getDate()).padStart(2, "0")} ${MONTHS_3[dt.getMonth()]} ${String(
+    dt.getFullYear(),
+  ).slice(-2)}`;
+};
+
 export const dateTime = (d: string | Date) =>
   new Date(d).toLocaleString("en-IN", {
     day: "2-digit",

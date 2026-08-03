@@ -91,6 +91,15 @@ const ACTIVITY_ICON: Record<ActivityType, typeof UserPlus> = {
 
 const RANGES: Range[] = ["daily", "weekly", "monthly", "yearly"];
 
+/** Muted premium palette: gold, emerald, sky, slate, soft orange. */
+const PLAN_COLORS = [
+  "oklch(0.775 0.128 87.5)",
+  "oklch(0.68 0.11 160)",
+  "oklch(0.68 0.09 235)",
+  "oklch(0.6 0.02 250)",
+  "oklch(0.72 0.115 55)",
+];
+
 function Dashboard() {
   const state = useGym();
   const [range, setRange] = useState<Range>("monthly");
@@ -246,19 +255,43 @@ function Dashboard() {
                   data={data.plans}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={58}
-                  outerRadius={88}
-                  paddingAngle={3}
+                  cx="50%"
+                  cy="45%"
+                  innerRadius="55%"
+                  outerRadius="80%"
+                  paddingAngle={5}
+                  cornerRadius={6}
+                  minAngle={2}
                   stroke="var(--color-background)"
+                  strokeWidth={2}
+                  isAnimationActive
+                  animationDuration={700}
                 >
                   {data.plans.map((_, i) => (
-                    <Cell key={i} fill={`var(--color-chart-${(i % 5) + 1})`} />
+                    <Cell
+                      key={i}
+                      fill={PLAN_COLORS[i % PLAN_COLORS.length]}
+                      style={{ transition: "opacity 200ms ease, filter 200ms ease" }}
+                    />
                   ))}
                 </Pie>
                 <Legend
                   verticalAlign="bottom"
+                  align="center"
                   iconType="circle"
-                  formatter={(v: string) => <span style={{ fontSize: 11 }}>{v}</span>}
+                  iconSize={9}
+                  wrapperStyle={{ paddingTop: 8, lineHeight: "20px" }}
+                  formatter={(v: string, entry) => (
+                    <span
+                      style={{ fontSize: 12, fontWeight: 500 }}
+                      className="text-muted-foreground"
+                    >
+                      {v}
+                      <span className="ml-1.5 text-foreground">
+                        {(entry as unknown as { payload?: { value?: number } })?.payload?.value ?? 0}
+                      </span>
+                    </span>
+                  )}
                 />
                 <Tooltip
                   cursor={false}
@@ -276,6 +309,7 @@ function Dashboard() {
               </PieChart>
             </ResponsiveContainer>
           </div>
+
         </Panel>
       </div>
 

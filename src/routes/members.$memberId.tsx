@@ -58,6 +58,7 @@ import {
   paidFor,
   planOf,
   shortDate,
+  compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
 import type { GymState, Membership, Payment } from "@/lib/gym/types";
@@ -222,7 +223,6 @@ function MemberProfile() {
                       <th className="py-3">Plan</th>
                       <th className="py-3">Period</th>
                       <th className="py-3 text-right">Original price</th>
-                      <th className="py-3 text-right">Discount</th>
                       <th className="py-3 text-right">Final price</th>
                       <th className="py-3 text-right">Paid</th>
                       <th className="py-3 text-right">Balance</th>
@@ -236,15 +236,20 @@ function MemberProfile() {
                       return (
                         <tr key={h.id} className="border-b border-border/50">
                           <td className="py-3">{planOf(state, h.planId)?.name ?? "—"}</td>
-                          <td className="py-3 text-muted-foreground">
-                            {shortDate(h.startDate)} → {shortDate(h.endDate)}
+                          <td className="py-3 whitespace-nowrap text-muted-foreground">
+                            {compactDate(h.startDate)} → {compactDate(h.endDate)}
                           </td>
                           <td className="py-3 text-right">{money(h.price, cur)}</td>
-                          <td className="py-3 text-right text-muted-foreground">
-                            {h.discount > 0 ? `- ${money(h.discount, cur)}` : "—"}
+                          <td className="py-3 text-right">
+                            {money(h.price - h.discount, cur)}
+                            {h.discount > 0 && (
+                              <span className="block text-xs text-muted-foreground">
+                                - {money(h.discount, cur)}
+                              </span>
+                            )}
                           </td>
-                          <td className="py-3 text-right">{money(h.price - h.discount, cur)}</td>
                           <td className="py-3 text-right text-success">{money(paid, cur)}</td>
+
                           <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
                             {money(bal, cur)}
                           </td>

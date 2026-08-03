@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Minus, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { adjustStock, trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
+import { trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
 import { activeMembers, liveProducts, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
 import type { Product, ProductCategory } from "@/lib/gym/types";
 
@@ -161,34 +161,13 @@ function ProductsPage() {
                     <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
                     <td className="py-3 text-gold">{money(p.price, cur)}</td>
                     <td className="py-3">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          aria-label="Decrease stock"
-                          onClick={() => adjustStock(p.id, -1)}
-                        >
-                          <Minus className="h-3.5 w-3.5" />
-                        </Button>
-                        <span
-                          className={`w-10 text-center font-medium ${
-                            p.stock <= p.lowStockAt ? "text-warning" : ""
-                          }`}
-                        >
-                          {p.stock}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          aria-label="Increase stock"
-                          onClick={() => adjustStock(p.id, 1)}
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                      <span
+                        className={`font-medium ${p.stock <= p.lowStockAt ? "text-warning" : ""}`}
+                      >
+                        {p.stock}
+                      </span>
                     </td>
+
                     <td className="py-3">
                       <div className="flex justify-end gap-1">
                         <Button size="sm" variant="secondary" disabled={p.stock < 1} onClick={() => setSellFor(p)}>
