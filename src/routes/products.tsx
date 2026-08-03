@@ -500,6 +500,8 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const walkInValid =
     !isWalkIn || (walkName.trim().length >= 2 && walkPhone.trim().replace(/\D/g, "").length >= 8);
 
+  const [buyerQuery, setBuyerQuery] = useState("");
+
   const reset = () => {
     setQty("1");
     setDiscountType("none");
