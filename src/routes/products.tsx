@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Minus, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { adjustStock, trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
+import { trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
 import { activeMembers, liveProducts, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
 import type { Product, ProductCategory } from "@/lib/gym/types";
 
