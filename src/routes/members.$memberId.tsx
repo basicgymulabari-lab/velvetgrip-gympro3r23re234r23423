@@ -60,7 +60,7 @@ import {
   shortDate,
   statusOf,
 } from "@/lib/gym/selectors";
-import type { Membership, Payment } from "@/lib/gym/types";
+import type { GymState, Membership, Payment } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/members/$memberId")({
   head: () => ({
