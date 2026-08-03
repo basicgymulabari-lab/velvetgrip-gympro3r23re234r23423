@@ -296,7 +296,7 @@ function MemberProfile() {
                               size="icon"
                               className="h-8 w-8"
                               aria-label="View invoice"
-                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone))}
+                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone, state))}
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
