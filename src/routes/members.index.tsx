@@ -69,7 +69,7 @@ const PAGE_SIZE = 8;
 
 function MembersPage() {
   const state = useGym();
-  const navigate = useNavigate({ from: "/members" });
+  const navigate = useNavigate({ from: "/members/" });
   const search = Route.useSearch();
   const [formOpen, setFormOpen] = useState(search.new);
   const [editing, setEditing] = useState<Member | null>(null);

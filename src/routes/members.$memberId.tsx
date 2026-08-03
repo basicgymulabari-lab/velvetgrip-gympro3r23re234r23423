@@ -60,7 +60,7 @@ import {
   shortDate,
   statusOf,
 } from "@/lib/gym/selectors";
-import type { Membership, Payment } from "@/lib/gym/types";
+import type { GymState, Membership, Payment } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/members/$memberId")({
   head: () => ({
@@ -216,12 +216,14 @@ function MemberProfile() {
           <TabsContent value="history">
             <Panel title="Membership History">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[620px] text-sm">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                       <th className="py-3">Plan</th>
                       <th className="py-3">Period</th>
-                      <th className="py-3 text-right">Price</th>
+                      <th className="py-3 text-right">Original price</th>
+                      <th className="py-3 text-right">Discount</th>
+                      <th className="py-3 text-right">Final price</th>
                       <th className="py-3 text-right">Paid</th>
                       <th className="py-3 text-right">Balance</th>
                       <th className="py-3 text-right">Action</th>
@@ -237,11 +239,16 @@ function MemberProfile() {
                           <td className="py-3 text-muted-foreground">
                             {shortDate(h.startDate)} → {shortDate(h.endDate)}
                           </td>
+                          <td className="py-3 text-right">{money(h.price, cur)}</td>
+                          <td className="py-3 text-right text-muted-foreground">
+                            {h.discount > 0 ? `- ${money(h.discount, cur)}` : "—"}
+                          </td>
                           <td className="py-3 text-right">{money(h.price - h.discount, cur)}</td>
                           <td className="py-3 text-right text-success">{money(paid, cur)}</td>
                           <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
                             {money(bal, cur)}
                           </td>
+
                           <td className="py-3 text-right">
                             {bal > 0 ? (
                               <Button size="sm" variant="secondary" onClick={() => setCollectFor(h)}>
@@ -289,7 +296,7 @@ function MemberProfile() {
                               size="icon"
                               className="h-8 w-8"
                               aria-label="View invoice"
-                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone))}
+                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone, state))}
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -410,7 +417,26 @@ function MemberProfile() {
   );
 }
 
-function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
+function invoiceOf(
+  p: Payment,
+  name: string,
+  phone: string | undefined,
+  state: GymState,
+): InvoiceData {
+  const ms = p.membershipId ? state.memberships.find((m) => m.id === p.membershipId) : null;
+  if (ms) {
+    const plan = planOf(state, ms.planId);
+    return {
+      invoiceNo: p.invoiceNo,
+      date: p.date,
+      billedTo: name,
+      contact: phone,
+      lines: [{ description: `${plan?.name ?? "Membership"} membership`, qty: 1, rate: ms.price }],
+      discount: ms.discount,
+      paid: paidFor(state, ms.id),
+      method: p.method,
+    };
+  }
   return {
     invoiceNo: p.invoiceNo,
     date: p.date,
@@ -421,6 +447,7 @@ function invoiceOf(p: Payment, name: string, phone?: string): InvoiceData {
     method: p.method,
   };
 }
+
 
 function CollectBalanceDialog({
   membership,

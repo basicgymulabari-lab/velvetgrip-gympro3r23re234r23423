@@ -476,6 +476,7 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const [walkPhone, setWalkPhone] = useState("");
   const [walkEmail, setWalkEmail] = useState("");
   const [walkAddress, setWalkAddress] = useState("");
+  const [buyerQuery, setBuyerQuery] = useState("");
 
   if (!state || !product) return null;
   const cur = state.settings.currency;
@@ -566,20 +567,47 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
           )}
           <div className="space-y-2">
             <Label>Buyer</Label>
-            <Select value={memberId} onValueChange={setMemberId}>
+            <Select
+              value={memberId}
+              onValueChange={setMemberId}
+              onOpenChange={(o) => !o && setBuyerQuery("")}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-64">
+                <div className="p-1.5">
+                  <Input
+                    autoFocus
+                    value={buyerQuery}
+                    onChange={(e) => setBuyerQuery(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    placeholder="Search members..."
+                    className="h-8"
+                  />
+                </div>
                 <SelectItem value="walkin">Walk-in customer</SelectItem>
-                {activeMembers(state).map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
+                {(() => {
+                  const q = buyerQuery.trim().toLowerCase();
+                  const list = activeMembers(state).filter((m) =>
+                    q ? m.name.toLowerCase().includes(q) : true,
+                  );
+                  if (list.length === 0)
+                    return (
+                      <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                        No members found.
+                      </p>
+                    );
+                  return list.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ));
+                })()}
               </SelectContent>
             </Select>
           </div>
+
           {isWalkIn && (
             <div className="grid gap-4 rounded-xl border border-gold/25 bg-secondary/30 p-4 sm:grid-cols-2">
               <div className="space-y-2">
