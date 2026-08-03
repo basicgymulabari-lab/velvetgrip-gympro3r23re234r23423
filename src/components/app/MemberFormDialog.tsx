@@ -107,6 +107,26 @@ export function MemberFormDialog({
   const remainingBalance = Math.max(0, finalPrice - (Number.isFinite(paidNowNum) ? paidNowNum : 0));
   const cur = state.settings.currency;
 
+  // Live (auto-updating) validation for discount + amount paid.
+  let liveDiscountError = "";
+  if (!member && form.discountType !== "none") {
+    const dv = Number(form.discountValue);
+    if (form.discountValue === "" || Number.isNaN(dv) || !Number.isFinite(dv) || dv < 0)
+      liveDiscountError = "Enter a valid discount.";
+    else if (form.discountType === "percent" && dv > 100)
+      liveDiscountError = "Discount cannot exceed 100%.";
+    else if (form.discountType === "fixed" && dv > originalPrice)
+      liveDiscountError = "Discount cannot exceed the membership price.";
+  }
+  let livePaidError = "";
+  if (!member && form.paidNow !== "") {
+    const paid = Number(form.paidNow);
+    if (Number.isNaN(paid) || !Number.isFinite(paid)) livePaidError = "Enter a valid amount.";
+    else if (paid < 0) livePaidError = "Amount cannot be negative.";
+    else if (form.planId && paid > finalPrice)
+      livePaidError = "Amount paid cannot exceed the final payable amount.";
+  }
+
   const validate = () => {
     const e: Record<string, string> = {};
     if (form.name.trim().length < 2) e.name = "Name must be at least 2 characters.";
@@ -116,27 +136,12 @@ export function MemberFormDialog({
     if (!form.dob) e.dob = "Date of birth is required.";
     else if (new Date(form.dob) > new Date()) e.dob = "Date of birth cannot be in the future.";
     if (form.address.trim().length > 200) e.address = "Address is too long.";
-    if (!member) {
-      if (form.discountType !== "none") {
-        const dv = Number(form.discountValue);
-        if (form.discountValue === "" || Number.isNaN(dv) || dv < 0)
-          e.discount = "Enter a valid discount.";
-        else if (form.discountType === "percent" && dv > 100)
-          e.discount = "Percentage discount cannot exceed 100%.";
-        else if (form.discountType === "fixed" && dv > originalPrice)
-          e.discount = `Discount cannot exceed the plan price (${cur}${originalPrice.toLocaleString("en-IN")}).`;
-      }
-      const paid = Number(form.paidNow);
-      if (form.paidNow !== "") {
-        if (Number.isNaN(paid) || !Number.isFinite(paid)) e.paidNow = "Enter a valid amount.";
-        else if (paid < 0) e.paidNow = "Amount cannot be negative.";
-        else if (form.planId && paid > finalPrice)
-          e.paidNow = `Amount paid cannot exceed the final payable amount (${cur}${finalPrice.toLocaleString("en-IN")}).`;
-      }
-    }
+    if (liveDiscountError) e.discount = liveDiscountError;
+    if (livePaidError) e.paidNow = livePaidError;
     setErrors(e);
     return Object.keys(e).length === 0;
   };
+
 
   const onFile = (file?: File) => {
     if (!file) return;
