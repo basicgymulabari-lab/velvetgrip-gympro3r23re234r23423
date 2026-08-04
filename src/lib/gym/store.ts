@@ -304,10 +304,19 @@ function purgeOldTrashedPlans() {
   const keepProducts = state.products.filter(
     (p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
   );
-  if (keep.length === state.plans.length && keepProducts.length === state.products.length) return;
-  state = { ...state, plans: keep, products: keepProducts };
+  const keepExpenses = (state.expenses ?? []).filter(
+    (e) => !(e.deletedAt && new Date(e.deletedAt).getTime() < cutoff),
+  );
+  if (
+    keep.length === state.plans.length &&
+    keepProducts.length === state.products.length &&
+    keepExpenses.length === (state.expenses ?? []).length
+  )
+    return;
+  state = { ...state, plans: keep, products: keepProducts, expenses: keepExpenses };
   persist();
 }
+
 
 export function addNote(memberId: string, title: string, note: string) {
   setState((st) => ({
