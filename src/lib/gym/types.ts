@@ -197,7 +197,8 @@ export type GymState = {
   products: Product[];
   sales: Sale[];
   activities: Activity[];
-  readNotifications: string[];
+  expenses: Expense[];
+
   invoiceSeq: number;
 };
 
