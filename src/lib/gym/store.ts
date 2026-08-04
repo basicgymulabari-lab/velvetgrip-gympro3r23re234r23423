@@ -41,11 +41,12 @@ function init() {
     if (raw) {
       const parsed = JSON.parse(raw) as GymState;
       if (parsed && parsed.version === 1) {
-        state = parsed;
+        state = { ...parsed, expenses: parsed.expenses ?? [] };
         purgeOldTrash();
         return;
       }
     }
+
   } catch {
     /* corrupt payload — fall through to a fresh seed */
   }
