@@ -142,8 +142,16 @@ function log(st: GymState, type: ActivityType, title: string, description: strin
 
 function nextInvoice(st: GymState): [GymState, string] {
   const seq = st.invoiceSeq + 1;
-  return [{ ...st, invoiceSeq: seq }, `${st.settings.invoicePrefix}-${seq}`];
+  const used = new Set(st.payments.map((p) => p.invoiceNo));
+  let n = seq;
+  let no = `${st.settings.invoicePrefix}-${String(n).padStart(6, "0")}`;
+  while (used.has(no)) {
+    n += 1;
+    no = `${st.settings.invoicePrefix}-${String(n).padStart(6, "0")}`;
+  }
+  return [{ ...st, invoiceSeq: n }, no];
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Members                                                             */
