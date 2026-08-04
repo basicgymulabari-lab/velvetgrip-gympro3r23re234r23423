@@ -87,6 +87,10 @@ const ACTIVITY_ICON: Record<ActivityType, typeof UserPlus> = {
   member_trashed: BadgeX,
   member_restored: RefreshCw,
   member_deleted: BadgeX,
+  expense_added: IndianRupee,
+  expense_updated: RefreshCw,
+  expense_trashed: BadgeX,
+
 };
 
 const RANGES: Range[] = ["daily", "weekly", "monthly", "yearly"];
