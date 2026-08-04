@@ -393,3 +393,93 @@ export const rangeToMetric = (r: Range): RevenueMetric =>
 
 export const metricMeta = (metric: RevenueMetric) =>
   REVENUE_METRICS.find((m) => m.key === metric) ?? REVENUE_METRICS[0];
+
+/* ---------------- Expenses & finance ---------------- */
+
+export const liveExpenses = (s: GymState) => (s.expenses ?? []).filter((e) => !e.deletedAt);
+export const trashedExpenses = (s: GymState) => (s.expenses ?? []).filter((e) => e.deletedAt);
+
+export function rangeWindow(range: Range): { start: Date; end: Date } {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (range === "weekly") start.setDate(start.getDate() - 6);
+  if (range === "monthly") start.setDate(start.getDate() - 29);
+  if (range === "yearly") start.setMonth(start.getMonth() - 11);
+  return { start, end };
+}
+
+export const inWindow = (date: string, w: { start: Date; end: Date }) => {
+  const t = new Date(date).getTime();
+  return t >= w.start.getTime() && t <= w.end.getTime();
+};
+
+export function expensesInRange(s: GymState, range: Range) {
+  const w = rangeWindow(range);
+  return liveExpenses(s).filter((e) => inWindow(e.date, w));
+}
+
+export function revenueInRange(s: GymState, range: Range) {
+  const w = rangeWindow(range);
+  return s.payments.filter((p) => inWindow(p.date, w)).reduce((sum, p) => sum + p.amount, 0);
+}
+
+export function expenseTotal(list: Array<{ amount: number }>) {
+  return list.reduce((sum, e) => sum + e.amount, 0);
+}
+
+export function expenseSeries(s: GymState, range: Range) {
+  const now = new Date();
+  const buckets: Array<{ label: string; start: Date; end: Date }> = [];
+  const mk = (label: string, start: Date, end: Date) => buckets.push({ label, start, end });
+
+  if (range === "daily") {
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const e = new Date(d);
+      e.setHours(23, 59, 59, 999);
+      mk(d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }), d, e);
+    }
+  } else if (range === "weekly") {
+    for (let i = 11; i >= 0; i--) {
+      const e = new Date(now);
+      e.setDate(e.getDate() - i * 7);
+      e.setHours(23, 59, 59, 999);
+      const d = new Date(e);
+      d.setDate(d.getDate() - 6);
+      d.setHours(0, 0, 0, 0);
+      mk(`W${12 - i}`, d, e);
+    }
+  } else if (range === "monthly") {
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const e = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+      mk(d.toLocaleDateString("en-IN", { month: "short" }), d, e);
+    }
+  } else {
+    for (let i = 4; i >= 0; i--) {
+      const y = now.getFullYear() - i;
+      mk(String(y), new Date(y, 0, 1), new Date(y, 11, 31, 23, 59, 59));
+    }
+  }
+
+  const list = liveExpenses(s);
+  return buckets.map((b) => ({
+    label: b.label,
+    total: list.filter((e) => inWindow(e.date, b)).reduce((sum, e) => sum + e.amount, 0),
+  }));
+}
+
+export function expenseByCategory(s: GymState, range: Range) {
+  const map = new Map<string, number>();
+  expensesInRange(s, range).forEach((e) => {
+    map.set(e.category, (map.get(e.category) ?? 0) + e.amount);
+  });
+  return Array.from(map.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+}

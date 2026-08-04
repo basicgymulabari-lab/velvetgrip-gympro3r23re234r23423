@@ -205,6 +205,10 @@
 }
 
 @media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
   .no-print {
     display: none !important;
   }
@@ -212,4 +216,26 @@
     background: #fff;
     color: #000;
   }
+  body.invoice-printing * {
+    visibility: hidden !important;
+  }
+  body.invoice-printing #invoice-print,
+  body.invoice-printing #invoice-print * {
+    visibility: visible !important;
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  body.invoice-printing #invoice-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    border: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    page-break-inside: avoid;
+  }
 }
+

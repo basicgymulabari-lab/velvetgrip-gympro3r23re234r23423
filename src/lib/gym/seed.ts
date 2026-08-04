@@ -514,7 +514,9 @@ export function buildSeed(): GymState {
     products,
     sales,
     activities,
+    expenses: [],
     readNotifications: [],
     invoiceSeq,
+
   };
 }

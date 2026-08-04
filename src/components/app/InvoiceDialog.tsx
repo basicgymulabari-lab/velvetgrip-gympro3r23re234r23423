@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Printer } from "lucide-react";
+import { Download, Printer } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { money, shortDate } from "@/lib/gym/selectors";
 import type { Settings } from "@/lib/gym/types";
+
+export type InvoiceStatus = "Paid" | "Partially Paid" | "Pending";
 
 export type InvoiceData = {
   invoiceNo: string;
@@ -14,8 +16,39 @@ export type InvoiceData = {
   discount?: number;
   paid: number;
   method?: string;
+  /** Document title, e.g. "Membership Invoice", "Sales Invoice", "Expense Receipt". */
+  title?: string;
+  /** Renders the buyer block as a walk-in customer instead of a member. */
+  walkIn?: boolean;
+  /** Extra contact lines shown under the buyer name (email, address...). */
+  contactLines?: string[];
+  /** Override the computed payment status. */
+  status?: InvoiceStatus;
 };
 
+export function invoiceStatusOf(total: number, paid: number): InvoiceStatus {
+  if (paid >= total && total > 0) return "Paid";
+  if (paid <= 0) return "Pending";
+  return "Partially Paid";
+}
+
+/** Prints the invoice node only — same layout for Print and Save-as-PDF (A4). */
+function printInvoice() {
+  if (typeof document === "undefined") return;
+  document.body.classList.add("invoice-printing");
+  const cleanup = () => {
+    document.body.classList.remove("invoice-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  window.setTimeout(cleanup, 1500);
+}
+
+/**
+ * Single reusable invoice component — used for membership payments, product
+ * sales and expense receipts. Only relevant fields are rendered per document.
+ */
 export function InvoiceDialog({
   invoice,
   settings,
@@ -30,13 +63,20 @@ export function InvoiceDialog({
   const discount = Math.min(Math.max(0, invoice.discount ?? 0), gross);
   const total = gross - discount;
   const due = Math.max(0, total - invoice.paid);
+  const status = invoice.status ?? invoiceStatusOf(total, invoice.paid);
+  const statusTone =
+    status === "Paid"
+      ? "border-success/45 bg-success/10 text-success"
+      : status === "Partially Paid"
+        ? "border-warning/45 bg-warning/10 text-warning"
+        : "border-destructive/45 bg-destructive/10 text-destructive";
 
   return (
     <Dialog open={Boolean(invoice)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader className="no-print">
           <DialogTitle className="font-display text-2xl tracking-wide">
-            Invoice {invoice.invoiceNo}
+            {invoice.title ?? "Invoice"} {invoice.invoiceNo}
           </DialogTitle>
         </DialogHeader>
 
@@ -53,16 +93,30 @@ export function InvoiceDialog({
               </p>
             </div>
             <div className="text-right">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Invoice</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                {invoice.title ?? "Invoice"}
+              </p>
               <p className="font-display text-xl">{invoice.invoiceNo}</p>
               <p className="text-xs text-muted-foreground">{shortDate(invoice.date)}</p>
+              <span
+                className={`mt-2 inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${statusTone}`}
+              >
+                {status}
+              </span>
             </div>
           </div>
 
           <div className="py-4">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Billed to</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+              {invoice.walkIn ? "Walk-in Customer" : "Billed to"}
+            </p>
             <p className="font-semibold">{invoice.billedTo}</p>
             {invoice.contact && <p className="text-xs text-muted-foreground">{invoice.contact}</p>}
+            {invoice.contactLines?.filter(Boolean).map((line) => (
+              <p key={line} className="text-xs text-muted-foreground">
+                {line}
+              </p>
+            ))}
           </div>
 
           <table className="w-full text-sm">
@@ -113,7 +167,10 @@ export function InvoiceDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          <Button onClick={() => window.print()}>
+          <Button variant="secondary" onClick={printInvoice}>
+            <Download className="mr-2 h-4 w-4" /> Download PDF
+          </Button>
+          <Button onClick={printInvoice}>
             <Printer className="mr-2 h-4 w-4" /> Print invoice
           </Button>
         </div>

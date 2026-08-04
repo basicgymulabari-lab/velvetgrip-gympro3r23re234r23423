@@ -10,6 +10,7 @@ import type {
   Plan,
   Product,
   Sale,
+  Expense,
   Settings,
 } from "./types";
 
@@ -41,11 +42,12 @@ function init() {
     if (raw) {
       const parsed = JSON.parse(raw) as GymState;
       if (parsed && parsed.version === 1) {
-        state = parsed;
+        state = { ...parsed, expenses: parsed.expenses ?? [] };
         purgeOldTrash();
         return;
       }
     }
+
   } catch {
     /* corrupt payload — fall through to a fresh seed */
   }
@@ -142,8 +144,16 @@ function log(st: GymState, type: ActivityType, title: string, description: strin
 
 function nextInvoice(st: GymState): [GymState, string] {
   const seq = st.invoiceSeq + 1;
-  return [{ ...st, invoiceSeq: seq }, `${st.settings.invoicePrefix}-${seq}`];
+  const used = new Set(st.payments.map((p) => p.invoiceNo));
+  let n = seq;
+  let no = `${st.settings.invoicePrefix}-${String(n).padStart(6, "0")}`;
+  while (used.has(no)) {
+    n += 1;
+    no = `${st.settings.invoicePrefix}-${String(n).padStart(6, "0")}`;
+  }
+  return [{ ...st, invoiceSeq: n }, no];
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Members                                                             */
@@ -295,10 +305,19 @@ function purgeOldTrashedPlans() {
   const keepProducts = state.products.filter(
     (p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
   );
-  if (keep.length === state.plans.length && keepProducts.length === state.products.length) return;
-  state = { ...state, plans: keep, products: keepProducts };
+  const keepExpenses = (state.expenses ?? []).filter(
+    (e) => !(e.deletedAt && new Date(e.deletedAt).getTime() < cutoff),
+  );
+  if (
+    keep.length === state.plans.length &&
+    keepProducts.length === state.products.length &&
+    keepExpenses.length === (state.expenses ?? []).length
+  )
+    return;
+  state = { ...state, plans: keep, products: keepProducts, expenses: keepExpenses };
   persist();
 }
+
 
 export function addNote(memberId: string, title: string, note: string) {
   setState((st) => ({
@@ -613,4 +632,102 @@ export function restoreBackup(json: string) {
 
 export function resetData() {
   setState(() => buildSeed());
+}
+
+/* ------------------------------------------------------------------ */
+/* Expenses                                                            */
+/* ------------------------------------------------------------------ */
+
+export type ExpenseInput = {
+  title: string;
+  category: Expense["category"];
+  amount: number;
+  date: string;
+  method: Expense["method"];
+  notes?: string;
+  attachment?: Expense["attachment"];
+};
+
+function nextExpenseNo(list: Expense[]) {
+  const max = list.reduce((n, e) => {
+    const num = Number(String(e.expenseNo).split("-").pop());
+    return Number.isFinite(num) ? Math.max(n, num) : n;
+  }, 0);
+  return `EXP-${String(max + 1).padStart(6, "0")}`;
+}
+
+export function addExpense(input: ExpenseInput) {
+  setState((st) => {
+    const list = st.expenses ?? [];
+    const expense: Expense = {
+      id: uid("exp"),
+      expenseNo: nextExpenseNo(list),
+      title: input.title.trim(),
+      category: input.category,
+      amount: Math.max(0, Math.round(input.amount)),
+      date: input.date,
+      method: input.method,
+      notes: input.notes?.trim() ?? "",
+      attachment: input.attachment ?? null,
+      createdAt: iso(new Date()),
+      deletedAt: null,
+    };
+    const next: GymState = { ...st, expenses: [expense, ...list] };
+    return log(
+      next,
+      "expense_added",
+      "Expense recorded",
+      `${expense.title} — ₹${expense.amount.toLocaleString("en-IN")}`,
+    );
+  });
+}
+
+export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
+  setState((st) => {
+    const next: GymState = {
+      ...st,
+      expenses: (st.expenses ?? []).map((e) =>
+        e.id === id
+          ? {
+              ...e,
+              ...patch,
+              title: patch.title !== undefined ? patch.title.trim() : e.title,
+              amount: patch.amount !== undefined ? Math.max(0, Math.round(patch.amount)) : e.amount,
+              notes: patch.notes !== undefined ? patch.notes.trim() : e.notes,
+              attachment: patch.attachment !== undefined ? patch.attachment : e.attachment,
+            }
+          : e,
+      ),
+    };
+    return log(next, "expense_updated", "Expense updated", `Expense ${id} updated`);
+  });
+}
+
+export function trashExpense(id: string) {
+  setState((st) => {
+    const target = (st.expenses ?? []).find((e) => e.id === id);
+    const next: GymState = {
+      ...st,
+      expenses: (st.expenses ?? []).map((e) =>
+        e.id === id ? { ...e, deletedAt: iso(new Date()) } : e,
+      ),
+    };
+    return log(
+      next,
+      "expense_trashed",
+      "Expense moved to trash",
+      `${target?.title ?? "Expense"} moved to trash`,
+    );
+  });
+}
+
+export function restoreExpense(id: string) {
+  setState((st) => ({
+    ...st,
+    expenses: (st.expenses ?? []).map((e) => (e.id === id ? { ...e, deletedAt: null } : e)),
+  }));
+}
+
+export function deleteExpensePermanently(id: string) {
+  setState((st) => ({ ...st, expenses: (st.expenses ?? []).filter((e) => e.id !== id) }));
 }
