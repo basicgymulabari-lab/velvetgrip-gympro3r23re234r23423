@@ -117,6 +117,37 @@ export type Sale = {
   date: string;
 };
 
+export type ExpenseCategory =
+  | "Rent"
+  | "Salaries"
+  | "Utilities"
+  | "Equipment"
+  | "Maintenance"
+  | "Marketing"
+  | "Supplies"
+  | "Other";
+
+export type ExpenseAttachment = {
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string;
+};
+
+export type Expense = {
+  id: ID;
+  expenseNo: string;
+  title: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string;
+  method: PaymentMethod;
+  notes: string;
+  attachment?: ExpenseAttachment | null;
+  createdAt: string;
+  deletedAt?: string | null;
+};
+
 export type ActivityType =
   | "member_added"
   | "membership_renewed"
@@ -127,7 +158,10 @@ export type ActivityType =
   | "invoice_generated"
   | "member_trashed"
   | "member_restored"
-  | "member_deleted";
+  | "member_deleted"
+  | "expense_added"
+  | "expense_updated"
+  | "expense_trashed";
 
 export type Activity = {
   id: ID;
@@ -136,6 +170,7 @@ export type Activity = {
   description: string;
   date: string;
 };
+
 
 export type Settings = {
   gymName: string;
