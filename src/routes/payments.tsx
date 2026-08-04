@@ -183,11 +183,17 @@ function PaymentsPage() {
                           const sale = p.saleId
                             ? state.sales.find((s) => s.id === p.saleId)
                             : undefined;
+                          const walkIn = Boolean(sale && !p.memberId);
                           setInvoice({
                             invoiceNo: p.invoiceNo,
                             date: p.date,
+                            title: sale ? "Sales Invoice" : "Membership Invoice",
+                            walkIn,
                             billedTo: p.who,
                             contact: memberOf(state, p.memberId)?.phone ?? sale?.buyerPhone,
+                            contactLines: walkIn
+                              ? [sale?.buyerEmail ?? "", sale?.buyerAddress ?? ""]
+                              : undefined,
                             lines: sale
                               ? [
                                   {
