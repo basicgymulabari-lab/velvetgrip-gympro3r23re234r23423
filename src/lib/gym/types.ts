@@ -198,6 +198,8 @@ export type GymState = {
   sales: Sale[];
   activities: Activity[];
   expenses: Expense[];
+  readNotifications: string[];
+
 
   invoiceSeq: number;
 };
