@@ -12,6 +12,8 @@ import {
   deleteMemberPermanently,
   deletePlanPermanently,
   deleteProductPermanently,
+  deleteExpensePermanently,
+  restoreExpense,
   restoreMember,
   restorePlan,
   restoreProduct,
@@ -24,6 +26,7 @@ import {
   trashedMembers,
   trashedPlans,
   trashedProducts,
+  trashedExpenses,
 } from "@/lib/gym/selectors";
 import type { Member } from "@/lib/gym/types";
 
@@ -57,6 +60,7 @@ function TrashPage() {
   const items = useMemo(() => (state ? trashedMembers(state) : []), [state]);
   const plans = useMemo(() => (state ? trashedPlans(state) : []), [state]);
   const products = useMemo(() => (state ? trashedProducts(state) : []), [state]);
+  const expenses = useMemo(() => (state ? trashedExpenses(state) : []), [state]);
   if (!state) return null;
 
   return (
