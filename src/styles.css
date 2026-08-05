@@ -240,12 +240,12 @@
     padding: 0 !important;
     height: auto !important;
   }
-  body.invoice-printing * {
-    visibility: hidden !important;
+  /* Drop every top-level branch that does not contain the invoice, so the
+     invoice is the first flow content and starts at the top of page 1. */
+  body.invoice-printing > *:not(:has(#invoice-print)) {
+    display: none !important;
   }
-  /* Neutralise the dialog wrappers so the invoice starts at the very top of
-     page 1 and can flow across pages instead of being clipped. */
-  body.invoice-printing [data-radix-popper-content-wrapper],
+  /* Neutralise the dialog wrappers so the invoice can flow across pages. */
   body.invoice-printing [data-slot="dialog-overlay"],
   body.invoice-printing [data-radix-dialog-overlay] {
     display: none !important;
@@ -264,10 +264,11 @@
     padding: 0 !important;
     border: none !important;
     border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
   }
   body.invoice-printing #invoice-print,
   body.invoice-printing #invoice-print * {
-    visibility: visible !important;
     color: #000 !important;
     background: transparent !important;
     box-shadow: none !important;
