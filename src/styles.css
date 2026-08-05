@@ -223,6 +223,28 @@
   body.invoice-printing * {
     visibility: hidden !important;
   }
+  /* Neutralise the dialog wrappers so the invoice starts at the very top of
+     page 1 and can flow across pages instead of being clipped. */
+  body.invoice-printing [data-radix-popper-content-wrapper],
+  body.invoice-printing [data-slot="dialog-overlay"],
+  body.invoice-printing [data-radix-dialog-overlay] {
+    display: none !important;
+  }
+  body.invoice-printing [role="dialog"] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    display: block !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
   body.invoice-printing #invoice-print,
   body.invoice-printing #invoice-print * {
     visibility: visible !important;
@@ -231,9 +253,7 @@
     box-shadow: none !important;
   }
   body.invoice-printing #invoice-print {
-    position: absolute;
-    left: 0;
-    top: 0;
+    position: static !important;
     margin: 0 !important;
     width: 100%;
     max-width: none;
