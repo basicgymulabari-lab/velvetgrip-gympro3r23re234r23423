@@ -93,7 +93,7 @@ function LoginPage() {
           </div>
         </div>
 
-        <div className="bg-card p-8 sm:p-10">
+        <div className="flex flex-col justify-center bg-card p-8 sm:p-10 lg:min-h-[560px]">
           <h1 className="font-display text-3xl tracking-wide">Admin Sign In</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Enter your credentials to access the management suite.
