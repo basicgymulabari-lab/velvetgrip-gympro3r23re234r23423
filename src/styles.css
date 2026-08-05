@@ -168,6 +168,26 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--color-gold-deep);
   }
+
+  /* Native date/time pickers: white calendar icon on the dark theme,
+     gold on hover/focus. */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(2);
+    opacity: 0.85;
+    cursor: pointer;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+  }
+  input[type="date"]:hover::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator,
+  input[type="month"]:hover::-webkit-calendar-picker-indicator,
+  input[type="time"]:hover::-webkit-calendar-picker-indicator,
+  input[type="date"]:focus::-webkit-calendar-picker-indicator {
+    filter: invert(72%) sepia(58%) saturate(560%) hue-rotate(1deg) brightness(94%) contrast(92%);
+    opacity: 1;
+  }
 }
 
 @utility text-gradient-gold {
