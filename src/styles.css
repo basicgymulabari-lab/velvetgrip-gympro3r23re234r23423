@@ -212,9 +212,13 @@
   .no-print {
     display: none !important;
   }
+  html,
   body {
     background: #fff;
     color: #000;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
   }
   body.invoice-printing * {
     visibility: hidden !important;
@@ -230,12 +234,25 @@
     position: absolute;
     left: 0;
     top: 0;
+    margin: 0 !important;
     width: 100%;
     max-width: none;
     border: none !important;
     padding: 0 !important;
     overflow: visible !important;
+  }
+  /* Small invoices stay on one page; long ones flow onto the next page
+     without cutting rows in half. */
+  body.invoice-printing #invoice-print table {
+    page-break-inside: auto;
+  }
+  body.invoice-printing #invoice-print tr,
+  body.invoice-printing #invoice-print p {
     page-break-inside: avoid;
   }
+  body.invoice-printing #invoice-print thead {
+    display: table-header-group;
+  }
 }
+
 
