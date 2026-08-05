@@ -27,7 +27,7 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@ironvault.gym");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -93,7 +93,7 @@ function LoginPage() {
           </div>
         </div>
 
-        <div className="bg-card p-8 sm:p-10">
+        <div className="flex flex-col justify-center bg-card p-8 sm:p-10 lg:min-h-[560px]">
           <h1 className="font-display text-3xl tracking-wide">Admin Sign In</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Enter your credentials to access the management suite.
@@ -110,6 +110,7 @@ function LoginPage() {
                   className="pl-9"
                   value={email}
                   autoComplete="username"
+                  placeholder="you@yourgym.com"
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
@@ -141,15 +142,6 @@ function LoginPage() {
               Sign in
             </Button>
           </form>
-
-          <div className="mt-8 rounded-xl border border-gold/25 bg-secondary/40 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gold">
-              Demo credentials
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              admin@ironvault.gym · <span className="text-foreground">admin123</span>
-            </p>
-          </div>
         </div>
       </div>
     </div>
