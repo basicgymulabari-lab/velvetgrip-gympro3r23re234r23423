@@ -35,9 +35,29 @@ export function invoiceStatusOf(total: number, paid: number): InvoiceStatus {
 /** Prints the invoice node only — same layout for Print and Save-as-PDF (A4). */
 function printInvoice() {
   if (typeof document === "undefined") return;
+  const node = document.getElementById("invoice-print");
+  const dialog = node?.closest<HTMLElement>('[role="dialog"]') ?? null;
+  const prevStyle = dialog?.getAttribute("style") ?? null;
+
+  // Radix centres the dialog with fixed positioning + a translate; both must be
+  // neutralised inline so the invoice starts at the top of page 1 and can flow
+  // onto extra pages when it is long.
+  if (dialog) {
+    dialog.style.setProperty("position", "static", "important");
+    dialog.style.setProperty("inset", "auto", "important");
+    dialog.style.setProperty("translate", "none", "important");
+    dialog.style.setProperty("transform", "none", "important");
+    dialog.style.setProperty("max-height", "none", "important");
+    dialog.style.setProperty("overflow", "visible", "important");
+  }
+
   document.body.classList.add("invoice-printing");
   const cleanup = () => {
     document.body.classList.remove("invoice-printing");
+    if (dialog) {
+      if (prevStyle === null) dialog.removeAttribute("style");
+      else dialog.setAttribute("style", prevStyle);
+    }
     window.removeEventListener("afterprint", cleanup);
   };
   window.addEventListener("afterprint", cleanup);
