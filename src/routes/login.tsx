@@ -110,6 +110,7 @@ function LoginPage() {
                   className="pl-9"
                   value={email}
                   autoComplete="username"
+                  placeholder="you@yourgym.com"
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
