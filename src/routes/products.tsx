@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, Search, Pencil, Trash2, ShoppingCart, PackageX, Boxes, Lock } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, ShoppingCart, PackageX, Boxes, Lock, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
@@ -18,7 +18,27 @@ import {
 } from "@/components/ui/select";
 import { trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
 import { activeMembers, liveProducts, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
-import type { Product, ProductCategory } from "@/lib/gym/types";
+import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
+import type { GymState, Product, ProductCategory, Sale } from "@/lib/gym/types";
+
+/** Builds the invoice view from the already-saved sale record — never regenerates one. */
+function saleInvoice(state: GymState, sale: Sale): InvoiceData {
+  const member = sale.memberId ? state.members.find((m) => m.id === sale.memberId) : undefined;
+  const walkIn = !member;
+  return {
+    invoiceNo: sale.invoiceNo,
+    date: sale.date,
+    title: "Sales Invoice",
+    walkIn,
+    billedTo: sale.buyer,
+    contact: member?.phone ?? sale.buyerPhone,
+    contactLines: walkIn ? [sale.buyerEmail ?? "", sale.buyerAddress ?? ""] : undefined,
+    lines: [{ description: sale.productName, qty: sale.qty, rate: sale.unitPrice }],
+    discount: sale.discount ?? 0,
+    paid: sale.total,
+    method: "cash",
+  };
+}
 
 const CATEGORIES: ProductCategory[] = [
   "Supplements",
@@ -59,6 +79,7 @@ function ProductsPage() {
   const [sellFor, setSellFor] = useState<Product | null>(null);
   const [trashFor, setTrashFor] = useState<Product | null>(null);
   const [lockedFor, setLockedFor] = useState<Product | null>(null);
+  const [invoice, setInvoice] = useState<InvoiceData | null>(null);
 
   const filtered = useMemo(() => {
     if (!state) return [];
