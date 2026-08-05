@@ -269,6 +269,9 @@
     box-shadow: none !important;
     background: transparent !important;
   }
+  body.invoice-printing [role="dialog"] {
+    translate: 0 0 !important;
+  }
   body.invoice-printing #invoice-print,
   body.invoice-printing #invoice-print * {
     color: #000 !important;
