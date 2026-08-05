@@ -216,15 +216,30 @@ function ProductsPage() {
                     {s.qty} × {state.products.find((p) => p.id === s.productId)?.name ?? "Product"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {s.buyer} · {shortDate(s.date)}
+                    {s.buyer} · {shortDate(s.date)} · {s.invoiceNo}
                   </p>
                 </div>
-                <p className="shrink-0 font-medium text-gold">{money(s.total, cur)}</p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <p className="font-medium text-gold">{money(s.total, cur)}</p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    aria-label="View invoice"
+                    title="View invoice"
+                    onClick={() => setInvoice(saleInvoice(state, s))}
+                  >
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </Panel>
+
+      <InvoiceDialog invoice={invoice} settings={state.settings} onOpenChange={() => setInvoice(null)} />
+
 
       <ProductDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
       <SellDialog product={sellFor} onClose={() => setSellFor(null)} />
