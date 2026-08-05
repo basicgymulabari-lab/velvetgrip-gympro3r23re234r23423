@@ -141,15 +141,6 @@ function LoginPage() {
               Sign in
             </Button>
           </form>
-
-          <div className="mt-8 rounded-xl border border-gold/25 bg-secondary/40 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gold">
-              Demo credentials
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              admin@ironvault.gym · <span className="text-foreground">admin123</span>
-            </p>
-          </div>
         </div>
       </div>
     </div>
