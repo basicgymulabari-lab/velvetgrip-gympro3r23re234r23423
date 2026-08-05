@@ -184,7 +184,12 @@ export function addMember(input: NewMemberInput) {
       deletedBy: null,
     };
     let next: GymState = { ...st, members: [member, ...st.members] };
-    next = log(next, "member_added", "New member registered", `${member.name} was added`);
+    next = log(
+      next,
+      "member_added",
+      "New member registered",
+      `${member.name} joined the gym`,
+    );
 
     if (input.planId) {
       const plan = next.plans.find((p) => p.id === input.planId);
@@ -411,7 +416,12 @@ export function renewMembership(
       createdAt: iso(new Date()),
     };
     let next: GymState = { ...st, memberships: [membership, ...st.memberships] };
-    next = log(next, "membership_renewed", "Membership renewed", `${member.name} renewed ${plan.name}`);
+    next = log(
+      next,
+      "membership_renewed",
+      "Membership renewed",
+      `${member.name} renewed ${plan.name} · ${plan.durationDays} days`,
+    );
     if (paidNow > 0) {
       const [withSeq, invoiceNo] = nextInvoice(next);
       next = {
@@ -486,7 +496,12 @@ export function addPayment(input: {
       "Payment received",
       `₹${input.amount.toLocaleString("en-IN")} from ${member?.name ?? "member"}`,
     );
-    next = log(next, "invoice_generated", "Invoice generated", `${invoiceNo} created`);
+    next = log(
+      next,
+      "invoice_generated",
+      "Invoice generated",
+      `${invoiceNo} created · ₹${input.amount.toLocaleString("en-IN")}`,
+    );
     return next;
   });
 }
@@ -600,7 +615,12 @@ export function sellProduct(
       "Product sold",
       `${product.name} × ${qty} sold to ${sale.buyer}`,
     );
-    next = log(next, "invoice_generated", "Invoice generated", `${invoiceNo} for ${sale.buyer}`);
+    next = log(
+      next,
+      "invoice_generated",
+      "Invoice generated",
+      `${invoiceNo} created for ${sale.buyer} · ₹${sale.total.toLocaleString("en-IN")}`,
+    );
     return next;
   });
 }
@@ -699,7 +719,13 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
           : e,
       ),
     };
-    return log(next, "expense_updated", "Expense updated", `Expense ${id} updated`);
+    const updated = next.expenses?.find((e) => e.id === id);
+    return log(
+      next,
+      "expense_updated",
+      "Expense updated",
+      `${updated?.title ?? "Expense"} — ₹${(updated?.amount ?? 0).toLocaleString("en-IN")}`,
+    );
   });
 }
 
