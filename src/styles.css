@@ -254,6 +254,8 @@
     position: static !important;
     inset: auto !important;
     transform: none !important;
+    translate: none !important;
+    scale: none !important;
     width: auto !important;
     max-width: none !important;
     max-height: none !important;
