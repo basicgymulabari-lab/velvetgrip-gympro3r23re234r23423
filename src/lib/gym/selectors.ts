@@ -119,6 +119,27 @@ export function lowStock(s: GymState): Product[] {
   return liveProducts(s).filter((p) => p.stock <= p.lowStockAt);
 }
 
+/** Amount collected against a product sale. Legacy sales were always fully paid. */
+export function salePaid(s: GymState, sale: Sale) {
+  if (typeof sale.paid === "number") {
+    return s.payments
+      .filter((p) => p.saleId === sale.id)
+      .reduce((sum, p) => sum + p.amount, sale.paid === undefined ? 0 : 0);
+  }
+  return sale.total;
+}
+
+export function saleDue(s: GymState, sale: Sale) {
+  return Math.max(0, sale.total - salePaid(s, sale));
+}
+
+export const salesFor = (s: GymState, memberId: string) =>
+  s.sales.filter((x) => x.memberId === memberId);
+
+export const pendingSales = (s: GymState) => s.sales.filter((x) => saleDue(s, x) > 0);
+
+
+
 export function profitOfSales(s: GymState, from?: Date) {
   return s.sales
     .filter((x) => (from ? new Date(x.date) >= from : true))
