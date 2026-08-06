@@ -64,6 +64,9 @@ import {
 import type { GymState, Membership, Payment } from "@/lib/gym/types";
 
 export const Route = createFileRoute("/members/$memberId")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Member Profile — IRONVAULT Gym Management" },
