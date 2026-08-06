@@ -57,6 +57,9 @@ import {
   money,
   paidFor,
   planOf,
+  salePaid,
+  saleDue,
+  salesFor,
   shortDate,
   compactDate,
   statusOf,
@@ -132,6 +135,7 @@ function MemberProfile() {
   const ms = currentMembership(state, member.id);
   const due = dueFor(state, member.id);
   const payments = state.payments.filter((p) => p.memberId === member.id);
+  const purchases = salesFor(state, member.id);
 
   return (
     <>
