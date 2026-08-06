@@ -214,10 +214,11 @@ function MemberProfile() {
           </Panel>
         </div>
 
-        <Tabs defaultValue="history">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-4 flex-wrap">
             <TabsTrigger value="history">Membership History</TabsTrigger>
             <TabsTrigger value="payments">Payments</TabsTrigger>
+            <TabsTrigger value="purchases">Product Purchases</TabsTrigger>
             <TabsTrigger value="measurements">Body Measurements</TabsTrigger>
             <TabsTrigger value="notes">Progress Notes</TabsTrigger>
           </TabsList>
