@@ -55,7 +55,7 @@ export function NotificationRow({
     </div>
   );
   return n.href ? (
-    <Link to={n.href} className="block">
+    <Link to={n.href} search={n.search as never} className="block">
       {body}
     </Link>
   ) : (
