@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, Search, Pencil, Trash2, ShoppingCart, PackageX, Boxes, Lock, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
@@ -17,7 +17,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
-import { activeMembers, liveProducts, lowStock, money, profitOfSales, shortDate } from "@/lib/gym/selectors";
+import {
+  activeMembers,
+  liveProducts,
+  lowStock,
+  money,
+  profitOfSales,
+  salePaid,
+  saleDue,
+  shortDate,
+} from "@/lib/gym/selectors";
 import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
 import type { GymState, Product, ProductCategory, Sale } from "@/lib/gym/types";
 
@@ -35,7 +44,7 @@ function saleInvoice(state: GymState, sale: Sale): InvoiceData {
     contactLines: walkIn ? [sale.buyerEmail ?? "", sale.buyerAddress ?? ""] : undefined,
     lines: [{ description: sale.productName, qty: sale.qty, rate: sale.unitPrice }],
     discount: sale.discount ?? 0,
-    paid: sale.total,
+    paid: salePaid(state, sale),
     method: "cash",
   };
 }
@@ -49,6 +58,9 @@ const CATEGORIES: ProductCategory[] = [
 ];
 
 export const Route = createFileRoute("/products")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    sale: typeof search.sale === "string" ? search.sale : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Products & Sales — IRONVAULT Gym Management" },
@@ -73,6 +85,7 @@ export const Route = createFileRoute("/products")({
 
 function ProductsPage() {
   const state = useGym();
+  const { sale: saleParam } = Route.useSearch();
   const [q, setQ] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
@@ -80,6 +93,13 @@ function ProductsPage() {
   const [trashFor, setTrashFor] = useState<Product | null>(null);
   const [lockedFor, setLockedFor] = useState<Product | null>(null);
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
+
+  // Opening a pending walk-in payment notification lands here with ?sale=<id>.
+  useEffect(() => {
+    if (!state || !saleParam) return;
+    const found = state.sales.find((x) => x.id === saleParam);
+    if (found) setInvoice(saleInvoice(state, found));
+  }, [state, saleParam]);
 
   const filtered = useMemo(() => {
     if (!state) return [];
@@ -241,7 +261,12 @@ function ProductsPage() {
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <p className="font-medium text-gold">{money(s.total, cur)}</p>
+                  <div className="text-right">
+                    <p className="font-medium text-gold">{money(s.total, cur)}</p>
+                    {saleDue(state, s) > 0 && (
+                      <p className="text-xs text-warning">Due {money(saleDue(state, s), cur)}</p>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="icon"
