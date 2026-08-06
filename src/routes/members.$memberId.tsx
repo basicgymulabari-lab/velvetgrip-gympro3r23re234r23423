@@ -324,6 +324,75 @@ function MemberProfile() {
             </Panel>
           </TabsContent>
 
+          <TabsContent value="purchases">
+            <Panel title="Product Purchases">
+              {purchases.length === 0 ? (
+                <EmptyState title="No product purchases yet" />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                        <th className="py-3">Invoice</th>
+                        <th className="py-3">Date</th>
+                        <th className="py-3">Product</th>
+                        <th className="py-3 text-right">Total</th>
+                        <th className="py-3 text-right">Paid</th>
+                        <th className="py-3 text-right">Due</th>
+                        <th className="py-3 text-right">Invoice</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchases.map((s) => {
+                        const paid = salePaid(state, s);
+                        const bal = saleDue(state, s);
+                        return (
+                          <tr key={s.id} className="border-b border-border/50">
+                            <td className="py-3 font-medium text-gold">{s.invoiceNo}</td>
+                            <td className="py-3 text-muted-foreground">{compactDate(s.date)}</td>
+                            <td className="py-3">
+                              {s.productName} × {s.qty}
+                            </td>
+                            <td className="py-3 text-right">{money(s.total, cur)}</td>
+                            <td className="py-3 text-right text-success">{money(paid, cur)}</td>
+                            <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
+                              {money(bal, cur)}
+                            </td>
+                            <td className="py-3 text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label="View invoice"
+                                onClick={() =>
+                                  setInvoice({
+                                    invoiceNo: s.invoiceNo,
+                                    date: s.date,
+                                    title: "Sales Invoice",
+                                    billedTo: member.name,
+                                    contact: member.phone,
+                                    lines: [
+                                      { description: s.productName, qty: s.qty, rate: s.unitPrice },
+                                    ],
+                                    discount: s.discount ?? 0,
+                                    paid,
+                                    method: "cash",
+                                  })
+                                }
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          </TabsContent>
+
           <TabsContent value="measurements">
             <Panel
               title="Body Measurements"
