@@ -517,6 +517,7 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const [walkEmail, setWalkEmail] = useState("");
   const [walkAddress, setWalkAddress] = useState("");
   const [buyerQuery, setBuyerQuery] = useState("");
+  const [paid, setPaid] = useState("");
 
   if (!state || !product) return null;
   const cur = state.settings.currency;
@@ -537,12 +538,16 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
       Number(discountValue) >= 0 &&
       (discountType === "percent" ? Number(discountValue) <= 100 : Number(discountValue) <= gross));
   const total = gross - discountAmount;
+  const paidNum = Number(paid || 0);
+  const paidValid = paid === "" || (Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= total);
+  const remaining = Math.max(0, total - (paid === "" ? total : paidNum));
   const isWalkIn = memberId === "walkin";
   const walkInValid =
     !isWalkIn || (walkName.trim().length >= 2 && walkPhone.trim().replace(/\D/g, "").length >= 8);
 
   const reset = () => {
     setQty("1");
+    setPaid("");
     setDiscountType("none");
     setDiscountValue("");
     setMemberId("walkin");
@@ -677,20 +682,34 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
               )}
             </div>
           )}
-          {discountAmount > 0 && (
-            <p className="text-sm text-muted-foreground">
-              Subtotal: {money(gross, cur)} · Discount: - {money(discountAmount, cur)}
-            </p>
-          )}
-          <p className="text-sm text-muted-foreground">
-            Total: <span className="font-display text-xl text-gold">{money(total, cur)}</span>
-          </p>
+          <div className="space-y-1 rounded-lg border border-border bg-background/40 p-3 text-sm">
+            <SummaryRow label="Original price" value={money(gross, cur)} />
+            <SummaryRow label="Discount" value={`- ${money(discountAmount, cur)}`} />
+            <SummaryRow label="Final payable" value={money(total, cur)} />
+            <SummaryRow label="Remaining balance" value={money(remaining, cur)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Amount collected now</Label>
+            <Input
+              type="number"
+              min={0}
+              max={total}
+              value={paid}
+              onChange={(e) => setPaid(e.target.value)}
+              placeholder={String(total)}
+            />
+            {!paidValid && (
+              <p className="text-xs text-destructive">
+                Amount collected cannot exceed the final payable amount ({money(total, cur)}).
+              </p>
+            )}
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
               Cancel
             </Button>
             <Button
-              disabled={!qtyValid || !discountValid || !walkInValid}
+              disabled={!qtyValid || !discountValid || !walkInValid || !paidValid}
               onClick={() => {
                 if (!qtyValid) return toast.error("Enter a valid quantity");
                 const member = isWalkIn ? null : activeMembers(state).find((m) => m.id === memberId);
@@ -701,6 +720,7 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
                   member?.id ?? null,
                   {
                     discount: discountAmount,
+                    amountPaid: paid === "" ? total : paidNum,
                     buyerPhone: member?.phone ?? (walkPhone.trim() || undefined),
                     buyerEmail: member?.email ?? (walkEmail.trim() || undefined),
                     buyerAddress: member?.address ?? (walkAddress.trim() || undefined),
@@ -717,5 +737,14 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between text-muted-foreground">
+      <span>{label}</span>
+      <span className="text-foreground">{value}</span>
+    </div>
   );
 }
