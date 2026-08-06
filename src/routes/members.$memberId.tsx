@@ -92,7 +92,12 @@ export const Route = createFileRoute("/members/$memberId")({
 function MemberProfile() {
   const state = useGym();
   const { memberId } = Route.useParams();
+  const { tab } = Route.useSearch();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState(tab ?? "history");
+  useEffect(() => {
+    if (tab) setActiveTab(tab);
+  }, [tab]);
   const [editOpen, setEditOpen] = useState(false);
   const [renewOpen, setRenewOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
