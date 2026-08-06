@@ -258,6 +258,8 @@ export type Notification = {
   date: string;
   tone: "danger" | "warning" | "success" | "info";
   href?: string;
+  /** Optional search params applied when the notification is clicked. */
+  search?: Record<string, string>;
 };
 
 const birthdayOffset = (dob: string) => {
