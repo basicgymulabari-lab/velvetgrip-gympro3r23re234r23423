@@ -5,6 +5,7 @@ import type {
   Membership,
   Payment,
   Product,
+  Sale,
 } from "./types";
 
 export const DAY = 24 * 60 * 60 * 1000;
@@ -117,6 +118,23 @@ export const trashedProducts = (s: GymState) => s.products.filter((p) => p.delet
 export function lowStock(s: GymState): Product[] {
   return liveProducts(s).filter((p) => p.stock <= p.lowStockAt);
 }
+
+/** Amount collected against a product sale. Legacy sales were always fully paid. */
+export function salePaid(s: GymState, sale: Sale) {
+  if (typeof sale.paid !== "number") return sale.total;
+  return s.payments.filter((p) => p.saleId === sale.id).reduce((sum, p) => sum + p.amount, 0);
+}
+
+export function saleDue(s: GymState, sale: Sale) {
+  return Math.max(0, sale.total - salePaid(s, sale));
+}
+
+export const salesFor = (s: GymState, memberId: string) =>
+  s.sales.filter((x) => x.memberId === memberId);
+
+export const pendingSales = (s: GymState) => s.sales.filter((x) => saleDue(s, x) > 0);
+
+
 
 export function profitOfSales(s: GymState, from?: Date) {
   return s.sales
@@ -240,6 +258,8 @@ export type Notification = {
   date: string;
   tone: "danger" | "warning" | "success" | "info";
   href?: string;
+  /** Optional search params applied when the notification is clicked. */
+  search?: Record<string, string>;
 };
 
 const birthdayOffset = (dob: string) => {
@@ -268,7 +288,23 @@ export function buildNotifications(s: GymState): Notification[] {
             : `Pending payment — ${money(due, s.settings.currency)}`,
         date: ms?.endDate ?? m.joinDate,
         tone: overdueDays > 0 ? "danger" : "warning",
-        href: "/payments",
+        href: `/members/${m.id}`,
+        search: { tab: "payments" },
+      });
+    }
+
+    const saleDues = salesFor(s, m.id).filter((x) => saleDue(s, x) > 0);
+    if (saleDues.length > 0) {
+      const amount = saleDues.reduce((sum, x) => sum + saleDue(s, x), 0);
+      list.push({
+        id: `sdue_${m.id}`,
+        category: "due",
+        title: m.name,
+        description: `Pending product payment — ${money(amount, s.settings.currency)}`,
+        date: saleDues[0]!.date,
+        tone: "warning",
+        href: `/members/${m.id}`,
+        search: { tab: "purchases" },
       });
     }
 
@@ -290,7 +326,8 @@ export function buildNotifications(s: GymState): Notification[] {
                   : `Membership expires in ${left} days`,
           date: ms.endDate,
           tone: left < 0 ? "danger" : "warning",
-          href: "/memberships",
+          href: `/members/${m.id}`,
+          search: { tab: "history" },
         });
       }
     }
@@ -308,6 +345,23 @@ export function buildNotifications(s: GymState): Notification[] {
       });
     }
   });
+
+  // Walk-in customers have no profile — link straight to the sale invoice.
+  pendingSales(s)
+    .filter((x) => !x.memberId)
+    .forEach((x) => {
+      list.push({
+        id: `sdue_${x.id}`,
+        category: "due",
+        title: x.buyer,
+        description: `Pending product payment — ${money(saleDue(s, x), s.settings.currency)} · ${x.invoiceNo}`,
+        date: x.date,
+        tone: "warning",
+        href: "/products",
+        search: { sale: x.id },
+      });
+    });
+
 
   if (s.settings.lowStockAlerts) {
     lowStock(s).forEach((p) => {

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { BellRing, CheckCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -65,8 +65,8 @@ function NotificationsPage() {
           <ul className="divide-y divide-border/60">
             {items.map((n) => {
               const isRead = read.has(n.id);
-              return (
-                <li key={n.id} className="flex items-start gap-4 py-4">
+              const row = (
+                <div className="flex items-start gap-4 py-4">
                   <span
                     className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl border ${
                       isRead
@@ -83,6 +83,21 @@ function NotificationsPage() {
                     <p className="text-xs text-muted-foreground">{n.description}</p>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">{relative(n.date)}</span>
+                </div>
+              );
+              return (
+                <li key={n.id}>
+                  {n.href ? (
+                    <Link
+                      to={n.href}
+                      search={n.search as never}
+                      className="block rounded-lg px-2 transition-colors hover:bg-secondary/50"
+                    >
+                      {row}
+                    </Link>
+                  ) : (
+                    row
+                  )}
                 </li>
               );
             })}

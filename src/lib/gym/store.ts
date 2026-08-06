@@ -565,6 +565,8 @@ export function sellProduct(
     buyerPhone?: string;
     buyerEmail?: string;
     buyerAddress?: string;
+    /** Amount collected now; defaults to the full payable total. */
+    amountPaid?: number;
   },
 ) {
   setState((st) => {
@@ -572,6 +574,8 @@ export function sellProduct(
     if (!product || qty <= 0 || !Number.isInteger(qty) || product.stock < qty) return st;
     const gross = product.price * qty;
     const discount = Math.min(Math.max(0, Math.round(extra?.discount ?? 0)), gross);
+    const total = gross - discount;
+    const paid = Math.min(Math.max(0, Math.round(extra?.amountPaid ?? total)), total);
     const [withSeq, invoiceNo] = nextInvoice(st);
     const sale: Sale = {
       id: uid("sale"),
@@ -582,7 +586,8 @@ export function sellProduct(
       unitPrice: product.price,
       unitCost: product.cost,
       discount,
-      total: gross - discount,
+      total,
+      paid,
       buyer: buyer || "Walk-in customer",
       buyerPhone: extra?.buyerPhone,
       buyerEmail: extra?.buyerEmail,
@@ -594,20 +599,23 @@ export function sellProduct(
       ...withSeq,
       sales: [sale, ...withSeq.sales],
       products: withSeq.products.map((p) => (p.id === productId ? { ...p, stock: p.stock - qty } : p)),
-      payments: [
-        {
-          id: uid("pay"),
-          invoiceNo,
-          saleId: sale.id,
-          memberId: memberId ?? null,
-          kind: "product",
-          amount: sale.total,
-          method: "cash",
-          date: sale.date,
-          note: `${product.name} × ${qty}`,
-        },
-        ...withSeq.payments,
-      ],
+      payments:
+        paid > 0
+          ? [
+              {
+                id: uid("pay"),
+                invoiceNo,
+                saleId: sale.id,
+                memberId: memberId ?? null,
+                kind: "product" as const,
+                amount: paid,
+                method: "cash" as const,
+                date: sale.date,
+                note: `${product.name} × ${qty}`,
+              },
+              ...withSeq.payments,
+            ]
+          : withSeq.payments,
     };
     next = log(
       next,
