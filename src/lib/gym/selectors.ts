@@ -121,12 +121,8 @@ export function lowStock(s: GymState): Product[] {
 
 /** Amount collected against a product sale. Legacy sales were always fully paid. */
 export function salePaid(s: GymState, sale: Sale) {
-  if (typeof sale.paid === "number") {
-    return s.payments
-      .filter((p) => p.saleId === sale.id)
-      .reduce((sum, p) => sum + p.amount, sale.paid === undefined ? 0 : 0);
-  }
-  return sale.total;
+  if (typeof sale.paid !== "number") return sale.total;
+  return s.payments.filter((p) => p.saleId === sale.id).reduce((sum, p) => sum + p.amount, 0);
 }
 
 export function saleDue(s: GymState, sale: Sale) {
