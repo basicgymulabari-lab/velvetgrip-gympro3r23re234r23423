@@ -109,6 +109,8 @@ export type Sale = {
   /** Discount applied to the sale, in currency units. */
   discount?: number;
   total: number;
+  /** Amount collected at the time of sale. Defaults to `total` when absent. */
+  paid?: number;
   buyer: string;
   buyerPhone?: string;
   buyerEmail?: string;
