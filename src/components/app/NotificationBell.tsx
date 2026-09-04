@@ -41,7 +41,12 @@ export function NotificationRow({
         !read && "bg-secondary/30",
       )}
     >
-      <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg border", toneClass(n.tone))}>
+      <span
+        className={cn(
+          "grid h-9 w-9 shrink-0 place-items-center rounded-lg border",
+          toneClass(n.tone),
+        )}
+      >
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
@@ -49,7 +54,9 @@ export function NotificationRow({
           <p className="truncate text-sm font-semibold">{n.title}</p>
           {!read && <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />}
         </div>
-        <p className={cn("text-xs text-muted-foreground", compact ? "truncate" : "")}>{n.description}</p>
+        <p className={cn("text-xs text-muted-foreground", compact ? "truncate" : "")}>
+          {n.description}
+        </p>
         <p className="mt-1 text-[11px] text-muted-foreground/70">{relative(n.date)}</p>
       </div>
     </div>

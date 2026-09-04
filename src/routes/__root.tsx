@@ -78,24 +78,45 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Dashboard — IRONVAULT Gym Management" },
-      { name: "description", content: "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard." },
+      {
+        name: "description",
+        content:
+          "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard.",
+      },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Dashboard — IRONVAULT Gym Management" },
-      { property: "og:description", content: "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard." },
+      {
+        property: "og:description",
+        content:
+          "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Dashboard — IRONVAULT Gym Management" },
-      { name: "twitter:description", content: "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/eae2d360-f58b-4c91-8e42-d30f78928bdd/id-preview-7b50c569--5c4d7447-48aa-439c-a227-632ce12f24ba.lovable.app-1785507703374.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/eae2d360-f58b-4c91-8e42-d30f78928bdd/id-preview-7b50c569--5c4d7447-48aa-439c-a227-632ce12f24ba.lovable.app-1785507703374.png" },
+      {
+        name: "twitter:description",
+        content:
+          "Track active members, collected revenue, pending dues and expired memberships from one premium offline gym dashboard.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/eae2d360-f58b-4c91-8e42-d30f78928bdd/id-preview-7b50c569--5c4d7447-48aa-439c-a227-632ce12f24ba.lovable.app-1785507703374.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/eae2d360-f58b-4c91-8e42-d30f78928bdd/id-preview-7b50c569--5c4d7447-48aa-439c-a227-632ce12f24ba.lovable.app-1785507703374.png",
+      },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", href: "/ironvault-icon-64.png", type: "image/png" },
+      { rel: "apple-touch-icon", href: "/ironvault-apple-touch-icon.png" },
     ],
   }),
   shellComponent: RootShell,

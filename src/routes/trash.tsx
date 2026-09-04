@@ -74,7 +74,8 @@ function TrashPage() {
         <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
         <p className="text-sm text-muted-foreground">
           Permanent deletion erases the member profile along with their memberships, payments,
-          measurements and notes. This cannot be undone — you must type <strong>DELETE</strong> to confirm.
+          measurements and notes. This cannot be undone — you must type <strong>DELETE</strong> to
+          confirm.
         </p>
       </div>
 
@@ -146,7 +147,10 @@ function TrashPage() {
 
       <Panel title="Deleted Membership Plans" className="mt-6">
         {plans.length === 0 ? (
-          <EmptyState title="No deleted plans" hint="Plans moved to Trash will appear here for 30 days." />
+          <EmptyState
+            title="No deleted plans"
+            hint="Plans moved to Trash will appear here for 30 days."
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
@@ -198,8 +202,13 @@ function TrashPage() {
                             variant="ghost"
                             className="text-destructive hover:text-destructive"
                             onClick={() => {
-                              deletePlanPermanently(p.id);
-                              toast.success("Plan permanently deleted");
+                              if (deletePlanPermanently(p.id)) {
+                                toast.success("Plan permanently deleted");
+                              } else {
+                                toast.error(
+                                  "This plan is used by membership history and cannot be deleted permanently",
+                                );
+                              }
                             }}
                           >
                             <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete forever
@@ -217,7 +226,10 @@ function TrashPage() {
 
       <Panel title="Deleted Products" className="mt-6">
         {products.length === 0 ? (
-          <EmptyState title="No deleted products" hint="Products moved to Trash will appear here for 30 days." />
+          <EmptyState
+            title="No deleted products"
+            hint="Products moved to Trash will appear here for 30 days."
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
@@ -288,7 +300,10 @@ function TrashPage() {
 
       <Panel title="Deleted Expenses" className="mt-6">
         {expenses.length === 0 ? (
-          <EmptyState title="No deleted expenses" hint="Expenses moved to Trash will appear here for 30 days." />
+          <EmptyState
+            title="No deleted expenses"
+            hint="Expenses moved to Trash will appear here for 30 days."
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
@@ -360,7 +375,6 @@ function TrashPage() {
       </Panel>
 
       <ConfirmDialog member={target} onClose={() => setTarget(null)} />
-
     </>
   );
 }
@@ -379,7 +393,8 @@ function ConfirmDialog({ member, onClose }: { member: Member | null; onClose: ()
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            All records linked to this member will be erased from this device. This action is irreversible.
+            All records linked to this member will be erased from this device. This action is
+            irreversible.
           </p>
           <div className="space-y-2">
             <Label>

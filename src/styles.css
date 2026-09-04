@@ -86,7 +86,7 @@
   --secondary-foreground: oklch(0.95 0.004 90);
 
   --muted: oklch(0.245 0.005 285);
-  --muted-foreground: oklch(0.68 0.008 285);
+  --muted-foreground: oklch(0.72 0.008 285);
 
   --accent: oklch(0.28 0.02 88);
   --accent-foreground: oklch(0.9 0.09 90);
@@ -146,6 +146,11 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-inline: contain;
+  }
+
   h1,
   h2,
   h3,
@@ -178,7 +183,9 @@
     filter: invert(1) brightness(2);
     opacity: 0.85;
     cursor: pointer;
-    transition: filter 0.15s ease, opacity 0.15s ease;
+    transition:
+      filter 0.15s ease,
+      opacity 0.15s ease;
   }
   input[type="date"]:hover::-webkit-calendar-picker-indicator,
   input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator,
@@ -218,7 +225,7 @@
     background: linear-gradient(
       90deg,
       transparent,
-      color-mix(in oklab, var(--color-gold) 70%, transparent),
+      color-mix(in oklab, var(--color-gold) 55%, transparent),
       transparent
     );
   }
@@ -300,5 +307,3 @@
     display: table-header-group;
   }
 }
-
-

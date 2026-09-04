@@ -38,7 +38,15 @@ export function GlobalSearch({
               <CommandItem
                 key={m.id}
                 value={`${m.name} ${m.phone} ${m.email}`}
-                onSelect={() => go(() => navigate({ to: "/members/$memberId", params: { memberId: m.id } }))}
+                onSelect={() =>
+                  go(() =>
+                    navigate({
+                      to: "/members/$memberId",
+                      params: { memberId: m.id },
+                      search: { tab: undefined },
+                    }),
+                  )
+                }
               >
                 <span className="font-medium">{m.name}</span>
                 <span className="ml-auto text-xs text-muted-foreground">{m.phone}</span>
@@ -50,7 +58,14 @@ export function GlobalSearch({
             <CommandItem
               key={p.id}
               value={`${p.name} ${p.sku} ${p.category}`}
-              onSelect={() => go(() => navigate({ to: "/products" }))}
+              onSelect={() =>
+                go(() =>
+                  navigate({
+                    to: "/products",
+                    search: { sale: undefined, sell: p.id },
+                  }),
+                )
+              }
             >
               <span className="font-medium">{p.name}</span>
               <span className="ml-auto text-xs text-muted-foreground">

@@ -25,11 +25,18 @@ import {
   activeMembers,
   currentMembership,
   dueFor,
+  gymMembers,
+  isWalkIn,
+  membershipHistory,
+  membershipPayable,
   memberOf,
   money,
+  outstandingFor,
   paidFor,
   paymentsWithNames,
   planOf,
+  salePaid,
+  salesFor,
   shortDate,
   totalDue,
   totalRevenue,
@@ -80,14 +87,23 @@ function PaymentsPage() {
   const page = Math.max(1, search.page);
 
   const history = useMemo(
-    () => (state ? paymentsWithNames(state).filter((p) => !q || `${p.who} ${p.invoiceNo} ${p.note}`.toLowerCase().includes(q)) : []),
+    () =>
+      state
+        ? paymentsWithNames(state).filter(
+            (p) => !q || `${p.who} ${p.invoiceNo} ${p.note}`.toLowerCase().includes(q),
+          )
+        : [],
     [state, q],
   );
 
   const pending = useMemo(() => {
     if (!state) return [];
     return activeMembers(state)
-      .map((m) => ({ member: m, due: dueFor(state, m.id), ms: currentMembership(state, m.id) }))
+      .map((m) => ({
+        member: m,
+        due: outstandingFor(state, m.id),
+        ms: currentMembership(state, m.id),
+      }))
       .filter((r) => r.due > 0)
       .filter((r) => !q || r.member.name.toLowerCase().includes(q))
       .sort((a, b) => b.due - a.due);
@@ -114,9 +130,24 @@ function PaymentsPage() {
       />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Metric icon={Wallet} label="Collected revenue" value={money(totalRevenue(state), cur)} tone="success" />
-        <Metric icon={AlertTriangle} label="Pending due" value={money(totalDue(state), cur)} tone="warning" />
-        <Metric icon={ReceiptText} label="Invoices" value={String(state.payments.length)} tone="gold" />
+        <Metric
+          icon={Wallet}
+          label="Collected revenue"
+          value={money(totalRevenue(state), cur)}
+          tone="success"
+        />
+        <Metric
+          icon={AlertTriangle}
+          label="Pending due"
+          value={money(totalDue(state), cur)}
+          tone="warning"
+        />
+        <Metric
+          icon={ReceiptText}
+          label="Invoices"
+          value={String(state.payments.length)}
+          tone="gold"
+        />
       </div>
 
       <Panel>
@@ -183,7 +214,14 @@ function PaymentsPage() {
                           const sale = p.saleId
                             ? state.sales.find((s) => s.id === p.saleId)
                             : undefined;
-                          const walkIn = Boolean(sale && !p.memberId);
+                          const payer = memberOf(state, p.memberId);
+                          const walkIn = Boolean(sale && (!payer || isWalkIn(payer)));
+                          const membership = p.membershipId
+                            ? state.memberships.find((item) => item.id === p.membershipId)
+                            : undefined;
+                          const membershipPlan = membership
+                            ? state.plans.find((plan) => plan.id === membership.planId)
+                            : undefined;
                           setInvoice({
                             invoiceNo: p.invoiceNo,
                             date: p.date,
@@ -192,7 +230,10 @@ function PaymentsPage() {
                             billedTo: p.who,
                             contact: memberOf(state, p.memberId)?.phone ?? sale?.buyerPhone,
                             contactLines: walkIn
-                              ? [sale?.buyerEmail ?? "", sale?.buyerAddress ?? ""]
+                              ? [
+                                  payer?.email ?? sale?.buyerEmail ?? "",
+                                  payer?.address ?? sale?.buyerAddress ?? "",
+                                ]
                               : undefined,
                             lines: sale
                               ? [
@@ -202,13 +243,21 @@ function PaymentsPage() {
                                     rate: sale.unitPrice,
                                   },
                                 ]
-                              : [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
-                            discount: sale?.discount ?? 0,
-                            paid: p.amount,
+                              : membership
+                                ? [
+                                    {
+                                      description: `${membershipPlan?.name ?? "Membership"} membership`,
+                                      qty: 1,
+                                      rate: membership.price,
+                                    },
+                                  ]
+                                : [{ description: p.note || "Payment", qty: 1, rate: p.amount }],
+                            discount: sale?.discount ?? membership?.discount ?? 0,
+                            joiningFee: membership?.joiningFee ?? 0,
+                            paid: membership ? paidFor(state, membership.id) : p.amount,
                             method: p.method,
                           });
                         }}
-
                       >
                         <Printer className="h-4 w-4" />
                       </Button>
@@ -222,8 +271,8 @@ function PaymentsPage() {
               <thead>
                 <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                   <th className="py-3">Member</th>
-                  <th className="py-3">Plan</th>
-                  <th className="py-3">Plan price</th>
+                  <th className="py-3">Source</th>
+                  <th className="py-3">Total</th>
                   <th className="py-3">Paid</th>
                   <th className="py-3">Status</th>
                   <th className="py-3 text-right">Balance</th>
@@ -231,27 +280,42 @@ function PaymentsPage() {
               </thead>
               <tbody>
                 {(paged as typeof pending).map(({ member, due, ms }) => {
-                  const price = ms ? ms.price - ms.discount : 0;
-                  const paid = ms ? paidFor(state, ms.id) : 0;
+                  const purchases = salesFor(state, member.id);
+                  const productTotal = purchases.reduce((sum, sale) => sum + sale.total, 0);
+                  const productPaid = purchases.reduce(
+                    (sum, sale) => sum + salePaid(state, sale),
+                    0,
+                  );
+                  const membershipTotal = ms ? membershipPayable(ms) : 0;
+                  const membershipPaid = ms ? paidFor(state, ms.id) : 0;
+                  const price = membershipTotal + productTotal;
+                  const paid = membershipPaid + productPaid;
                   return (
                     <tr key={member.id} className="border-b border-border/50 hover:bg-secondary/40">
                       <td className="py-3">
                         <Link
                           to="/members/$memberId"
                           params={{ memberId: member.id }}
+                          search={{ tab: undefined }}
                           className="font-medium hover:text-gold"
                         >
                           {member.name}
                         </Link>
                         <p className="text-xs text-muted-foreground">{member.phone}</p>
                       </td>
-                      <td className="py-3 text-muted-foreground">{planOf(state, ms?.planId)?.name ?? "—"}</td>
+                      <td className="py-3 text-muted-foreground">
+                        {isWalkIn(member)
+                          ? "Product purchases"
+                          : (planOf(state, ms?.planId)?.name ?? "—")}
+                      </td>
                       <td className="py-3 text-muted-foreground">{money(price, cur)}</td>
                       <td className="py-3 text-success">{money(paid, cur)}</td>
                       <td className="py-3">
                         <StatusBadge status={paid === 0 ? "unpaid" : "partial"} />
                       </td>
-                      <td className="py-3 text-right font-medium text-warning">{money(due, cur)}</td>
+                      <td className="py-3 text-right font-medium text-warning">
+                        {money(due, cur)}
+                      </td>
                     </tr>
                   );
                 })}
@@ -260,11 +324,20 @@ function PaymentsPage() {
           )}
         </div>
 
-        <TablePager page={page} pageSize={PAGE_SIZE} total={list.length} onPage={(p) => setSearch({ page: p })} />
+        <TablePager
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={list.length}
+          onPage={(p) => setSearch({ page: p })}
+        />
       </Panel>
 
       <PaymentDialog open={entryOpen} onOpenChange={setEntryOpen} />
-      <InvoiceDialog invoice={invoice} settings={state.settings} onOpenChange={() => setInvoice(null)} />
+      <InvoiceDialog
+        invoice={invoice}
+        settings={state.settings}
+        onOpenChange={() => setInvoice(null)}
+      />
     </>
   );
 }
@@ -298,7 +371,13 @@ function Metric({
   );
 }
 
-function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+function PaymentDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
   const state = useGym();
   const [memberId, setMemberId] = useState("");
   const [amount, setAmount] = useState("");
@@ -306,14 +385,20 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
   const [note, setNote] = useState("");
 
   if (!state) return null;
-  const ms = memberId ? currentMembership(state, memberId) : undefined;
-  const due = memberId ? dueFor(state, memberId) : 0;
+  const ms = memberId
+    ? membershipHistory(state, memberId).find(
+        (membership) => membershipPayable(membership) - paidFor(state, membership.id) > 0,
+      )
+    : undefined;
+  const due = ms ? Math.max(0, membershipPayable(ms) - paidFor(state, ms.id)) : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl tracking-wide">Manual Payment Entry</DialogTitle>
+          <DialogTitle className="font-display text-2xl tracking-wide">
+            Manual Payment Entry
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
@@ -323,7 +408,7 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
                 <SelectValue placeholder="Select member" />
               </SelectTrigger>
               <SelectContent className="max-h-64">
-                {activeMembers(state).map((m) => (
+                {gymMembers(state).map((m) => (
                   <SelectItem key={m.id} value={m.id}>
                     {m.name}
                   </SelectItem>
@@ -339,7 +424,13 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Amount</Label>
-              <Input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <Input
+                type="number"
+                min={1}
+                max={due || undefined}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label>Method</Label>
@@ -348,7 +439,7 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(["cash", "card", "bank", "cheque", "other"] as const).map((m) => (
+                  {(["cash", "upi", "card", "bank", "cheque", "other"] as const).map((m) => (
                     <SelectItem key={m} value={m} className="capitalize">
                       {m}
                     </SelectItem>
@@ -359,7 +450,12 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
           </div>
           <div className="space-y-2">
             <Label>Note</Label>
-            <Input value={note} maxLength={120} onChange={(e) => setNote(e.target.value)} placeholder="Membership payment" />
+            <Input
+              value={note}
+              maxLength={120}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Membership payment"
+            />
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
@@ -369,14 +465,19 @@ function PaymentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
               onClick={() => {
                 const value = Number(amount);
                 if (!memberId) return toast.error("Select a member");
-                if (!value || value <= 0 || Number.isNaN(value)) return toast.error("Enter a valid amount");
-                addPayment({
+                if (!value || value <= 0 || Number.isNaN(value))
+                  return toast.error("Enter a valid amount");
+                if (due <= 0) return toast.error("This member has no outstanding balance");
+                if (value > due)
+                  return toast.error("Payment cannot exceed the outstanding balance");
+                const recorded = addPayment({
                   memberId,
                   membershipId: ms?.id ?? null,
                   amount: value,
                   method,
                   note: note.trim() || "Manual payment entry",
                 });
+                if (!recorded) return toast.error("Payment could not be recorded");
                 toast.success("Payment recorded and invoice generated");
                 setMemberId("");
                 setAmount("");

@@ -46,6 +46,7 @@ import {
   addMeasurement,
   addNote,
   addPayment,
+  addSalePayment,
   renewMembership,
   toggleFreeze,
   useGym,
@@ -53,8 +54,11 @@ import {
 import {
   currentMembership,
   dueFor,
+  isWalkIn,
   membershipHistory,
+  membershipPayable,
   money,
+  outstandingFor,
   paidFor,
   planOf,
   salePaid,
@@ -64,7 +68,10 @@ import {
   compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
-import type { GymState, Membership, Payment } from "@/lib/gym/types";
+import type { GymState, Membership, Payment, Sale } from "@/lib/gym/types";
+
+type CollectBalanceTarget =
+  { kind: "membership"; membership: Membership } | { kind: "purchase"; sale: Sale };
 
 export const Route = createFileRoute("/members/$memberId")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -81,7 +88,8 @@ export const Route = createFileRoute("/members/$memberId")({
       { property: "og:title", content: "Member Profile — IRONVAULT Gym Management" },
       {
         property: "og:description",
-        content: "Membership history, dues, measurements and trainer progress notes in one profile.",
+        content:
+          "Membership history, dues, measurements and trainer progress notes in one profile.",
       },
     ],
   }),
@@ -105,7 +113,7 @@ function MemberProfile() {
   const [renewOpen, setRenewOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [msrOpen, setMsrOpen] = useState(false);
-  const [collectFor, setCollectFor] = useState<Membership | null>(null);
+  const [collectFor, setCollectFor] = useState<CollectBalanceTarget | null>(null);
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
 
   const member = state?.members.find((m) => m.id === memberId);
@@ -131,11 +139,15 @@ function MemberProfile() {
   }
 
   const cur = state.settings.currency;
-  const status = statusOf(state, member.id);
+  const walkIn = isWalkIn(member);
+  const status = walkIn ? "walk-in" : statusOf(state, member.id);
   const ms = currentMembership(state, member.id);
-  const due = dueFor(state, member.id);
+  const due = walkIn ? outstandingFor(state, member.id) : dueFor(state, member.id);
   const payments = state.payments.filter((p) => p.memberId === member.id);
   const purchases = salesFor(state, member.id);
+  const duePurchase = purchases.find((sale) => saleDue(state, sale) > 0);
+  const profileTab =
+    walkIn && !["payments", "purchases"].includes(activeTab) ? "purchases" : activeTab;
 
   return (
     <>
@@ -147,13 +159,13 @@ function MemberProfile() {
 
       <PageHeader
         title={member.name}
-        subtitle={`Member since ${shortDate(member.joinDate)}`}
+        subtitle={walkIn ? "Walk-in Customer" : `Member since ${shortDate(member.joinDate)}`}
         actions={
           <>
             <Button variant="secondary" onClick={() => setEditOpen(true)}>
               <Pencil className="mr-2 h-4 w-4" /> Edit
             </Button>
-            {ms && (
+            {!walkIn && ms && (
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -164,9 +176,11 @@ function MemberProfile() {
                 <Snowflake className="mr-2 h-4 w-4" /> {ms.frozen ? "Unfreeze" : "Freeze"}
               </Button>
             )}
-            <Button onClick={() => setRenewOpen(true)}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Renew
-            </Button>
+            {!walkIn && (
+              <Button onClick={() => setRenewOpen(true)}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Renew
+              </Button>
+            )}
           </>
         }
       />
@@ -177,7 +191,11 @@ function MemberProfile() {
             <div className="flex flex-col items-center text-center">
               <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-3xl border border-gold/35 bg-secondary font-display text-3xl text-gold">
                 {member.photo ? (
-                  <img src={member.photo} alt={member.name} className="h-full w-full object-cover" />
+                  <img
+                    src={member.photo}
+                    alt={member.name}
+                    className="h-full w-full object-cover"
+                  />
                 ) : (
                   member.name.slice(0, 2).toUpperCase()
                 )}
@@ -190,24 +208,56 @@ function MemberProfile() {
 
             <dl className="mt-6 space-y-3 text-sm">
               <Info icon={Phone} value={member.phone} />
-              <Info icon={Mail} value={member.email} />
-              <Info icon={Cake} value={shortDate(member.dob)} />
+              <Info icon={Mail} value={member.email || "—"} />
+              {!walkIn && <Info icon={Cake} value={shortDate(member.dob)} />}
               <Info icon={MapPin} value={member.address || "—"} />
-              <Info icon={ShieldAlert} value={`Emergency: ${member.emergencyContact || "—"}`} />
+              {!walkIn && (
+                <Info icon={ShieldAlert} value={`Emergency: ${member.emergencyContact || "—"}`} />
+              )}
             </dl>
           </Panel>
 
-          <Panel title="Membership Status">
-            {ms ? (
+          <Panel
+            title="Membership Status"
+            actions={
+              walkIn && duePurchase ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setCollectFor({ kind: "purchase", sale: duePurchase })}
+                >
+                  <Wallet className="mr-1.5 h-3.5 w-3.5" /> Record Payment
+                </Button>
+              ) : undefined
+            }
+          >
+            {walkIn ? (
+              <div className="space-y-3 text-sm">
+                <Row label="Membership" value="No Membership" />
+                <div className="flex items-center justify-between border-t border-border pt-3">
+                  <span className="text-muted-foreground">Outstanding</span>
+                  <span
+                    className={`font-display text-xl ${due > 0 ? "text-warning" : "text-success"}`}
+                  >
+                    {money(due, cur)}
+                  </span>
+                </div>
+              </div>
+            ) : ms ? (
               <div className="space-y-3 text-sm">
                 <Row label="Plan" value={planOf(state, ms.planId)?.name ?? "—"} />
                 <Row label="Start" value={shortDate(ms.startDate)} />
                 <Row label="Expiry" value={shortDate(ms.endDate)} />
                 <Row label="Plan price" value={money(ms.price - ms.discount, cur)} />
+                {(ms.joiningFee ?? 0) > 0 && (
+                  <Row label="Joining fee" value={money(ms.joiningFee ?? 0, cur)} />
+                )}
                 <Row label="Paid" value={money(paidFor(state, ms.id), cur)} />
                 <div className="flex items-center justify-between border-t border-border pt-3">
                   <span className="text-muted-foreground">Total due</span>
-                  <span className={`font-display text-xl ${due > 0 ? "text-warning" : "text-success"}`}>
+                  <span
+                    className={`font-display text-xl ${due > 0 ? "text-warning" : "text-success"}`}
+                  >
                     {money(due, cur)}
                   </span>
                 </div>
@@ -218,13 +268,13 @@ function MemberProfile() {
           </Panel>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <Tabs value={profileTab} onValueChange={setActiveTab}>
           <TabsList className="mb-4 flex-wrap">
-            <TabsTrigger value="history">Membership History</TabsTrigger>
+            {!walkIn && <TabsTrigger value="history">Membership History</TabsTrigger>}
             <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger value="purchases">Product Purchases</TabsTrigger>
-            <TabsTrigger value="measurements">Body Measurements</TabsTrigger>
-            <TabsTrigger value="notes">Progress Notes</TabsTrigger>
+            {!walkIn && <TabsTrigger value="measurements">Body Measurements</TabsTrigger>}
+            {!walkIn && <TabsTrigger value="notes">Progress Notes</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="history">
@@ -245,7 +295,7 @@ function MemberProfile() {
                   <tbody>
                     {membershipHistory(state, member.id).map((h) => {
                       const paid = paidFor(state, h.id);
-                      const bal = Math.max(0, h.price - h.discount - paid);
+                      const bal = Math.max(0, membershipPayable(h) - paid);
                       return (
                         <tr key={h.id} className="border-b border-border/50">
                           <td className="py-3">{planOf(state, h.planId)?.name ?? "—"}</td>
@@ -254,7 +304,7 @@ function MemberProfile() {
                           </td>
                           <td className="py-3 text-right">{money(h.price, cur)}</td>
                           <td className="py-3 text-right">
-                            {money(h.price - h.discount, cur)}
+                            {money(membershipPayable(h), cur)}
                             {h.discount > 0 && (
                               <span className="block text-xs text-muted-foreground">
                                 - {money(h.discount, cur)}
@@ -263,13 +313,19 @@ function MemberProfile() {
                           </td>
                           <td className="py-3 text-right text-success">{money(paid, cur)}</td>
 
-                          <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
+                          <td
+                            className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}
+                          >
                             {money(bal, cur)}
                           </td>
 
                           <td className="py-3 text-right">
                             {bal > 0 ? (
-                              <Button size="sm" variant="secondary" onClick={() => setCollectFor(h)}>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setCollectFor({ kind: "membership", membership: h })}
+                              >
                                 <Wallet className="mr-1.5 h-3.5 w-3.5" /> Collect balance
                               </Button>
                             ) : (
@@ -314,7 +370,9 @@ function MemberProfile() {
                               size="icon"
                               className="h-8 w-8"
                               aria-label="View invoice"
-                              onClick={() => setInvoice(invoiceOf(p, member.name, member.phone, state))}
+                              onClick={() =>
+                                setInvoice(invoiceOf(p, member.name, member.phone, state))
+                              }
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -359,33 +417,58 @@ function MemberProfile() {
                             </td>
                             <td className="py-3 text-right">{money(s.total, cur)}</td>
                             <td className="py-3 text-right text-success">{money(paid, cur)}</td>
-                            <td className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}>
+                            <td
+                              className={`py-3 text-right ${bal > 0 ? "text-warning" : "text-success"}`}
+                            >
                               {money(bal, cur)}
                             </td>
                             <td className="py-3 text-right">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                aria-label="View invoice"
-                                onClick={() =>
-                                  setInvoice({
-                                    invoiceNo: s.invoiceNo,
-                                    date: s.date,
-                                    title: "Sales Invoice",
-                                    billedTo: member.name,
-                                    contact: member.phone,
-                                    lines: [
-                                      { description: s.productName, qty: s.qty, rate: s.unitPrice },
-                                    ],
-                                    discount: s.discount ?? 0,
-                                    paid,
-                                    method: "cash",
-                                  })
-                                }
-                              >
-                                <Eye className="h-4 w-4" />
-                              </Button>
+                              <div className="flex items-center justify-end gap-2">
+                                {bal > 0 ? (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => setCollectFor({ kind: "purchase", sale: s })}
+                                  >
+                                    <Wallet className="mr-1.5 h-3.5 w-3.5" /> Collect balance
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-success">Fully paid</span>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  aria-label="View invoice"
+                                  onClick={() =>
+                                    setInvoice({
+                                      invoiceNo: s.invoiceNo,
+                                      date: s.date,
+                                      title: "Sales Invoice",
+                                      walkIn,
+                                      billedTo: member.name,
+                                      contact: member.phone,
+                                      lines: [
+                                        {
+                                          description: s.productName,
+                                          qty: s.qty,
+                                          rate: s.unitPrice,
+                                        },
+                                      ],
+                                      discount: s.discount ?? 0,
+                                      paid,
+                                      method: [...state.payments]
+                                        .filter((payment) => payment.saleId === s.id)
+                                        .sort(
+                                          (a, b) =>
+                                            new Date(a.date).getTime() - new Date(b.date).getTime(),
+                                        )[0]?.method,
+                                    })
+                                  }
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -410,9 +493,24 @@ function MemberProfile() {
                 <div className="mb-5 h-[220px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chart} margin={{ left: -20, right: 8, top: 8 }}>
-                      <CartesianGrid strokeDasharray="3 6" stroke="var(--color-border)" vertical={false} />
-                      <XAxis dataKey="label" fontSize={11} tickLine={false} axisLine={false} stroke="var(--color-muted-foreground)" />
-                      <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="var(--color-muted-foreground)" />
+                      <CartesianGrid
+                        strokeDasharray="3 6"
+                        stroke="var(--color-border)"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="label"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        stroke="var(--color-muted-foreground)"
+                      />
+                      <YAxis
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        stroke="var(--color-muted-foreground)"
+                      />
                       <RTooltip
                         contentStyle={{
                           background: "var(--color-popover)",
@@ -421,8 +519,20 @@ function MemberProfile() {
                           fontSize: 12,
                         }}
                       />
-                      <Line type="monotone" dataKey="weight" stroke="var(--color-gold)" strokeWidth={2} dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="bodyFat" stroke="var(--color-chart-4)" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line
+                        type="monotone"
+                        dataKey="weight"
+                        stroke="var(--color-gold)"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="bodyFat"
+                        stroke="var(--color-chart-4)"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -473,7 +583,9 @@ function MemberProfile() {
                     <li key={n.id} className="rounded-xl border border-border bg-secondary/30 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <p className="truncate font-medium">{n.title}</p>
-                        <span className="shrink-0 text-xs text-muted-foreground">{shortDate(n.date)}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {shortDate(n.date)}
+                        </span>
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">{n.note}</p>
                     </li>
@@ -486,20 +598,34 @@ function MemberProfile() {
       </div>
 
       <MemberFormDialog open={editOpen} onOpenChange={setEditOpen} member={member} />
-      <RenewDialog
-        open={renewOpen}
-        onOpenChange={setRenewOpen}
-        memberId={member.id}
-        onDone={() => navigate({ to: "/members/$memberId", params: { memberId: member.id } })}
-      />
-      <NoteDialog open={noteOpen} onOpenChange={setNoteOpen} memberId={member.id} />
-      <MeasurementDialog open={msrOpen} onOpenChange={setMsrOpen} memberId={member.id} />
+      {!walkIn && (
+        <RenewDialog
+          open={renewOpen}
+          onOpenChange={setRenewOpen}
+          memberId={member.id}
+          onDone={() =>
+            navigate({
+              to: "/members/$memberId",
+              params: { memberId: member.id },
+              search: { tab: undefined },
+            })
+          }
+        />
+      )}
+      {!walkIn && <NoteDialog open={noteOpen} onOpenChange={setNoteOpen} memberId={member.id} />}
+      {!walkIn && (
+        <MeasurementDialog open={msrOpen} onOpenChange={setMsrOpen} memberId={member.id} />
+      )}
       <CollectBalanceDialog
-        membership={collectFor}
+        target={collectFor}
         onClose={() => setCollectFor(null)}
         memberName={member.name}
       />
-      <InvoiceDialog invoice={invoice} settings={state.settings} onOpenChange={() => setInvoice(null)} />
+      <InvoiceDialog
+        invoice={invoice}
+        settings={state.settings}
+        onOpenChange={() => setInvoice(null)}
+      />
     </>
   );
 }
@@ -520,6 +646,7 @@ function invoiceOf(
       contact: phone,
       lines: [{ description: `${plan?.name ?? "Membership"} membership`, qty: 1, rate: ms.price }],
       discount: ms.discount,
+      joiningFee: ms.joiningFee ?? 0,
       paid: paidFor(state, ms.id),
       method: p.method,
     };
@@ -535,13 +662,12 @@ function invoiceOf(
   };
 }
 
-
 function CollectBalanceDialog({
-  membership,
+  target,
   memberName,
   onClose,
 }: {
-  membership: Membership | null;
+  target: CollectBalanceTarget | null;
   memberName: string;
   onClose: () => void;
 }) {
@@ -551,15 +677,18 @@ function CollectBalanceDialog({
   const [note, setNote] = useState("");
   const [seeded, setSeeded] = useState<string | null>(null);
 
-  if (!state || !membership) return null;
+  if (!state || !target) return null;
   const cur = state.settings.currency;
-  const total = membership.price - membership.discount;
-  const paid = paidFor(state, membership.id);
+  const membership = target.kind === "membership" ? target.membership : null;
+  const sale = target.kind === "purchase" ? target.sale : null;
+  const targetId = membership?.id ?? sale!.id;
+  const total = membership ? membershipPayable(membership) : sale!.total;
+  const paid = membership ? paidFor(state, membership.id) : salePaid(state, sale!);
   const balance = Math.max(0, total - paid);
-  const plan = planOf(state, membership.planId);
+  const plan = membership ? planOf(state, membership.planId) : null;
 
-  if (seeded !== membership.id) {
-    setSeeded(membership.id);
+  if (seeded !== targetId) {
+    setSeeded(targetId);
     setAmount(String(balance));
     setMethod("cash");
     setNote("");
@@ -574,7 +703,10 @@ function CollectBalanceDialog({
         <div className="space-y-4">
           <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-4 text-sm">
             <Row label="Member" value={memberName} />
-            <Row label="Plan" value={plan?.name ?? "—"} />
+            <Row
+              label={membership ? "Plan" : "Product"}
+              value={membership ? (plan?.name ?? "—") : `${sale!.productName} × ${sale!.qty}`}
+            />
             <Row label="Total price" value={money(total, cur)} />
             <Row label="Already paid" value={money(paid, cur)} />
             <div className="flex items-center justify-between border-t border-border pt-3">
@@ -600,10 +732,11 @@ function CollectBalanceDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="upi">UPI</SelectItem>
                 <SelectItem value="card">Card</SelectItem>
                 <SelectItem value="bank">Bank transfer</SelectItem>
                 <SelectItem value="cheque">Cheque</SelectItem>
-                <SelectItem value="other">Other / UPI</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -623,17 +756,27 @@ function CollectBalanceDialog({
             <Button
               onClick={() => {
                 const n = Number(amount);
-                if (Number.isNaN(n) || n <= 0) return toast.error("Enter an amount greater than zero");
+                if (Number.isNaN(n) || n <= 0)
+                  return toast.error("Enter an amount greater than zero");
                 if (n > balance) return toast.error("Payment cannot exceed the remaining balance");
-                addPayment({
-                  memberId: membership.memberId,
-                  membershipId: membership.id,
-                  amount: n,
-                  method,
-                  note: note.trim() || `${plan?.name ?? "Membership"} — balance payment`,
-                });
+                const saved = membership
+                  ? (addPayment({
+                      memberId: membership.memberId,
+                      membershipId: membership.id,
+                      amount: n,
+                      method,
+                      note: note.trim() || `${plan?.name ?? "Membership"} — balance payment`,
+                    }),
+                    true)
+                  : addSalePayment(
+                      sale!.id,
+                      n,
+                      method,
+                      note.trim() || `${sale!.productName} — balance payment`,
+                    );
+                if (!saved) return toast.error("Payment could not be recorded");
                 toast.success(
-                  n === balance ? "Payment complete — membership fully paid" : "Payment recorded",
+                  n === balance ? "Payment complete — balance fully paid" : "Payment recorded",
                 );
                 setSeeded(null);
                 onClose();
@@ -695,13 +838,16 @@ export function RenewDialog({
   const discountAmount = Math.min(Math.max(0, Math.round(rawDiscount)), originalPrice);
   const finalPrice = originalPrice - discountAmount;
   const paidNum = Number(paid || 0);
-  const paidValid = paid === "" || (Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= finalPrice);
+  const paidValid =
+    paid === "" || (Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= finalPrice);
   const discountValid =
     discountType === "none" ||
     (discountValue !== "" &&
       Number.isFinite(Number(discountValue)) &&
       Number(discountValue) >= 0 &&
-      (discountType === "percent" ? Number(discountValue) <= 100 : Number(discountValue) <= originalPrice));
+      (discountType === "percent"
+        ? Number(discountValue) <= 100
+        : Number(discountValue) <= originalPrice));
   const remaining = Math.max(0, finalPrice - (paid === "" ? 0 : paidNum));
 
   const reset = () => {
@@ -715,7 +861,9 @@ export function RenewDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl tracking-wide">Renew Membership</DialogTitle>
+          <DialogTitle className="font-display text-2xl tracking-wide">
+            Renew Membership
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
@@ -725,11 +873,13 @@ export function RenewDialog({
                 <SelectValue placeholder="Select a plan" />
               </SelectTrigger>
               <SelectContent>
-                {state.plans.filter((p) => !p.deletedAt).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} — {money(p.price, cur)} / {p.durationDays} days
-                  </SelectItem>
-                ))}
+                {state.plans
+                  .filter((p) => !p.deletedAt)
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} — {money(p.price, cur)} / {p.durationDays} days
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -760,7 +910,9 @@ export function RenewDialog({
                 onChange={(e) => setDiscountValue(e.target.value)}
                 placeholder="0"
               />
-              {!discountValid && <p className="text-xs text-destructive">Enter a valid discount.</p>}
+              {!discountValid && (
+                <p className="text-xs text-destructive">Enter a valid discount.</p>
+              )}
             </div>
           )}
           {plan && (
@@ -830,7 +982,9 @@ function NoteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl tracking-wide">Add Progress Note</DialogTitle>
+          <DialogTitle className="font-display text-2xl tracking-wide">
+            Add Progress Note
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
@@ -839,7 +993,12 @@ function NoteDialog({
           </div>
           <div className="space-y-2">
             <Label>Note</Label>
-            <Textarea rows={4} value={note} maxLength={600} onChange={(e) => setNote(e.target.value)} />
+            <Textarea
+              rows={4}
+              value={note}
+              maxLength={600}
+              onChange={(e) => setNote(e.target.value)}
+            />
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>

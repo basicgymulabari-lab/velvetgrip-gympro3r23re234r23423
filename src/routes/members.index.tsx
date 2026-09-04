@@ -25,8 +25,9 @@ import { trashMember, useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
-  dueFor,
+  isWalkIn,
   money,
+  outstandingFor,
   planOf,
   shortDate,
   statusOf,
@@ -64,7 +65,7 @@ export const Route = createFileRoute("/members/")({
   ),
 });
 
-const FILTERS = ["all", "active", "expiring", "expired", "frozen", "due"] as const;
+const FILTERS = ["all", "active", "expiring", "expired", "frozen", "due", "walk-in"] as const;
 const PAGE_SIZE = 8;
 
 function MembersPage() {
@@ -86,12 +87,14 @@ function MembersPage() {
     return activeMembers(state)
       .map((m) => ({
         member: m,
-        status: statusOf(state, m.id),
-        due: dueFor(state, m.id),
+        status: isWalkIn(m) ? "walk-in" : statusOf(state, m.id),
+        due: outstandingFor(state, m.id),
         membership: currentMembership(state, m.id),
       }))
       .filter((r) => {
         if (filter === "due") return r.due > 0;
+        if (filter === "walk-in") return isWalkIn(r.member);
+        if (isWalkIn(r.member)) return filter === "all";
         if (filter === "active") return r.status === "active" || r.status === "expiring";
         if (filter !== "all") return r.status === filter;
         return true;
@@ -116,7 +119,7 @@ function MembersPage() {
     <>
       <PageHeader
         title="Member Management"
-        subtitle={`${rows.length} member${rows.length === 1 ? "" : "s"} matching the current view`}
+        subtitle={`${rows.length} ${rows.length === 1 ? "person" : "people"} matching the current view`}
         actions={
           <Button
             onClick={() => {
@@ -153,7 +156,7 @@ function MembersPage() {
                     : "border-border text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {f === "due" ? "Pending due" : f}
+                {f === "due" ? "Pending due" : f === "walk-in" ? "Walk-in Customers" : f}
               </button>
             ))}
           </div>
@@ -161,7 +164,7 @@ function MembersPage() {
 
         <div className="mt-5 overflow-x-auto">
           {paged.length === 0 ? (
-            <EmptyState title="No members found" hint="Try a different filter or search term." />
+            <EmptyState title="No people found" hint="Try a different filter or search term." />
           ) : (
             <table className="w-full min-w-[760px] text-sm">
               <thead>
@@ -176,12 +179,19 @@ function MembersPage() {
               </thead>
               <tbody>
                 {paged.map(({ member, status, due, membership }) => (
-                  <tr key={member.id} className="border-b border-border/50 transition-colors hover:bg-secondary/40">
+                  <tr
+                    key={member.id}
+                    className="border-b border-border/50 transition-colors hover:bg-secondary/40"
+                  >
                     <td className="py-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl border border-gold/25 bg-secondary text-xs font-semibold text-gold">
                           {member.photo ? (
-                            <img src={member.photo} alt={member.name} className="h-full w-full object-cover" />
+                            <img
+                              src={member.photo}
+                              alt={member.name}
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
                             member.name.slice(0, 2).toUpperCase()
                           )}
@@ -193,10 +203,10 @@ function MembersPage() {
                       </div>
                     </td>
                     <td className="py-3 text-muted-foreground">
-                      {planOf(state, membership?.planId)?.name ?? "—"}
+                      {isWalkIn(member) ? "—" : (planOf(state, membership?.planId)?.name ?? "—")}
                     </td>
                     <td className="py-3 text-muted-foreground">
-                      {membership ? shortDate(membership.endDate) : "—"}
+                      {!isWalkIn(member) && membership ? shortDate(membership.endDate) : "—"}
                     </td>
                     <td className="py-3">
                       <StatusBadge status={status} />
@@ -209,7 +219,12 @@ function MembersPage() {
                     <td className="py-3">
                       <div className="flex justify-end gap-1">
                         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-                          <Link to="/members/$memberId" params={{ memberId: member.id }} aria-label="View profile">
+                          <Link
+                            to="/members/$memberId"
+                            params={{ memberId: member.id }}
+                            search={{ tab: undefined }}
+                            aria-label="View profile"
+                          >
                             <Eye className="h-4 w-4" />
                           </Link>
                         </Button>
@@ -217,7 +232,7 @@ function MembersPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          aria-label="Edit member"
+                          aria-label={isWalkIn(member) ? "Edit walk-in customer" : "Edit member"}
                           onClick={() => {
                             setEditing(member);
                             setFormOpen(true);

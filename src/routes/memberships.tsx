@@ -1,6 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, RefreshCw, Snowflake, Trash2, BellRing, Pencil, Lock } from "lucide-react";
+import {
+  Plus,
+  RefreshCw,
+  Snowflake,
+  Trash2,
+  BellRing,
+  Pencil,
+  Lock,
+  ChevronDown,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
@@ -57,6 +66,7 @@ function MembershipsPage() {
   const [renewFor, setRenewFor] = useState<string | null>(null);
   const [trashPlanTarget, setTrashPlanTarget] = useState<Plan | null>(null);
   const [lockedPlan, setLockedPlan] = useState<Plan | null>(null);
+  const [plansExpanded, setPlansExpanded] = useState(true);
 
   const rows = useMemo(() => {
     if (!state) return [];
@@ -107,8 +117,32 @@ function MembershipsPage() {
         ))}
       </div>
 
-      <Panel title="Membership Plans" className="mb-6">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <section className="surface-panel hairline-top relative mb-6 overflow-hidden rounded-2xl">
+        <button
+          type="button"
+          aria-expanded={plansExpanded}
+          aria-controls="membership-plans-content"
+          className="flex w-full items-center justify-between gap-4 border-b border-border px-4 py-4 text-left transition-colors hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold sm:px-5"
+          onClick={() => setPlansExpanded((expanded) => !expanded)}
+        >
+          <span className="font-display text-xl tracking-wide">Membership Plans</span>
+          <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            {plansExpanded ? "Hide plans" : `Show ${livePlans(state).length} plans`}
+            <ChevronDown
+              className={`h-5 w-5 text-gold transition-transform duration-300 ease-out ${
+                plansExpanded ? "rotate-180" : "rotate-0"
+              }`}
+            />
+          </span>
+        </button>
+        <div
+          id="membership-plans-content"
+          className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
+            plansExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="overflow-hidden">
+            <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
           {livePlans(state).map((p) => (
             <div
               key={p.id}
@@ -147,15 +181,24 @@ function MembershipsPage() {
                 </div>
               </div>
               <p className="mt-3 font-display text-3xl text-gradient-gold">{money(p.price, cur)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Default joining fee: {money(p.joiningFee ?? 1000, cur)}
+              </p>
               <p className="mt-2 text-sm text-muted-foreground">{p.description}</p>
               <p className="mt-3 text-xs text-muted-foreground">
-                {activeMembers(state).filter((m) => currentMembership(state, m.id)?.planId === p.id).length}{" "}
+                {
+                  activeMembers(state).filter(
+                    (m) => currentMembership(state, m.id)?.planId === p.id,
+                  ).length
+                }{" "}
                 members enrolled
               </p>
             </div>
           ))}
+            </div>
+          </div>
         </div>
-      </Panel>
+      </section>
 
       <Tabs defaultValue="all">
         <TabsList className="mb-4 flex-wrap">
@@ -195,23 +238,33 @@ function MembershipsPage() {
                       {list.map(({ member, ms, status }) => {
                         const left = daysUntil(ms!.endDate);
                         return (
-                          <tr key={member.id} className="border-b border-border/50 hover:bg-secondary/40">
+                          <tr
+                            key={member.id}
+                            className="border-b border-border/50 hover:bg-secondary/40"
+                          >
                             <td className="py-3">
                               <Link
                                 to="/members/$memberId"
                                 params={{ memberId: member.id }}
+                                search={{ tab: undefined }}
                                 className="font-medium hover:text-gold"
                               >
                                 {member.name}
                               </Link>
                               <p className="text-xs text-muted-foreground">{member.phone}</p>
                             </td>
-                            <td className="py-3 text-muted-foreground">{planOf(state, ms!.planId)?.name}</td>
+                            <td className="py-3 text-muted-foreground">
+                              {planOf(state, ms!.planId)?.name}
+                            </td>
                             <td className="py-3 text-muted-foreground">
                               {shortDate(ms!.startDate)} → {shortDate(ms!.endDate)}
                             </td>
                             <td className="py-3">
-                              <span className={left < 0 ? "text-destructive" : left <= 7 ? "text-warning" : ""}>
+                              <span
+                                className={
+                                  left < 0 ? "text-destructive" : left <= 7 ? "text-warning" : ""
+                                }
+                              >
                                 {left < 0 ? `${Math.abs(left)}d overdue` : `${left}d left`}
                               </span>
                             </td>
@@ -230,7 +283,9 @@ function MembershipsPage() {
                                   aria-label="Freeze membership"
                                   onClick={() => {
                                     toggleFreeze(ms!.id);
-                                    toast.success(ms!.frozen ? "Membership unfrozen" : "Membership frozen");
+                                    toast.success(
+                                      ms!.frozen ? "Membership unfrozen" : "Membership frozen",
+                                    );
                                   }}
                                 >
                                   <Snowflake className="h-4 w-4" />
@@ -246,7 +301,11 @@ function MembershipsPage() {
                                 >
                                   <BellRing className="h-4 w-4" />
                                 </Button>
-                                <Button size="sm" variant="secondary" onClick={() => setRenewFor(member.id)}>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setRenewFor(member.id)}
+                                >
                                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Renew
                                 </Button>
                               </div>
@@ -277,8 +336,8 @@ function MembershipsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              This membership plan will be moved to Trash. You can restore it within 30 days before it is
-              permanently deleted.
+              This membership plan will be moved to Trash. You can restore it within 30 days before
+              it is permanently deleted.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setTrashPlanTarget(null)}>
@@ -308,8 +367,8 @@ function MembershipsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              This membership plan is protected and cannot be deleted while it is locked. Please unlock the
-              plan first if you want to move it to Trash.
+              This membership plan is protected and cannot be deleted while it is locked. Please
+              unlock the plan first if you want to move it to Trash.
             </p>
             <div className="flex justify-end">
               <Button onClick={() => setLockedPlan(null)}>OK</Button>
@@ -333,6 +392,7 @@ function PlanDialog({
   const [form, setForm] = useState({
     name: "",
     price: "",
+    joiningFee: "1000",
     durationDays: "",
     description: "",
     locked: false,
@@ -344,6 +404,7 @@ function PlanDialog({
       setForm({
         name: plan?.name ?? "",
         price: plan ? String(plan.price) : "",
+        joiningFee: String(plan?.joiningFee ?? 1000),
         durationDays: plan ? String(plan.durationDays) : "",
         description: plan?.description ?? "",
         locked: plan?.locked ?? false,
@@ -353,7 +414,11 @@ function PlanDialog({
   }, [open, plan]);
 
   const invalid =
-    form.name.trim().length < 2 || Number(form.price) <= 0 || Number(form.durationDays) <= 0;
+    form.name.trim().length < 2 ||
+    Number(form.price) <= 0 ||
+    Number(form.joiningFee) < 0 ||
+    !Number.isFinite(Number(form.durationDays)) ||
+    Number(form.durationDays) <= 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -372,7 +437,7 @@ function PlanDialog({
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label>Price</Label>
               <Input
@@ -380,6 +445,15 @@ function PlanDialog({
                 min={0}
                 value={form.price}
                 onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Default joining fee</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.joiningFee}
+                onChange={(e) => setForm((f) => ({ ...f, joiningFee: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
@@ -404,7 +478,9 @@ function PlanDialog({
           <div className="flex items-center justify-between rounded-xl border border-border bg-secondary/30 p-3">
             <div>
               <Label>Lock this membership plan</Label>
-              <p className="text-xs text-muted-foreground">Locked plans cannot be moved to Trash.</p>
+              <p className="text-xs text-muted-foreground">
+                Locked plans cannot be moved to Trash.
+              </p>
             </div>
             <Switch
               checked={form.locked}
@@ -413,7 +489,7 @@ function PlanDialog({
           </div>
           {touched && invalid && (
             <p className="text-xs text-destructive">
-              Provide a name, a price above 0 and a duration of at least 1 day.
+              Provide a name, price, non-negative joining fee and duration of at least 1 day.
             </p>
           )}
           <div className="flex justify-end gap-2">
@@ -428,6 +504,7 @@ function PlanDialog({
                   id: plan?.id,
                   name: form.name.trim(),
                   price: Number(form.price),
+                  joiningFee: Number(form.joiningFee),
                   durationDays: Number(form.durationDays),
                   description: form.description.trim(),
                   active: true,

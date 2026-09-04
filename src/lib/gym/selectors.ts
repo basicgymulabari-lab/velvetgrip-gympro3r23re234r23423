@@ -1,43 +1,15 @@
-import type {
-  GymState,
-  Member,
-  MemberStatus,
-  Membership,
-  Payment,
-  Product,
-  Sale,
-} from "./types";
+import type { GymState, Member, MemberStatus, Membership, Payment, Product, Sale } from "./types";
+import { formatCompactDate, formatDayMonth, formatMonth, formatShortDate } from "./calendar";
 
 export const DAY = 24 * 60 * 60 * 1000;
 
 export const money = (n: number, currency = "₹") =>
   `${currency}${Math.round(n).toLocaleString("en-IN")}`;
 
-export const shortDate = (d: string | Date) =>
-  new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-
-const MONTHS_3 = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+export const shortDate = formatShortDate;
 
 /** Compact date: 03 Aug 26 */
-export const compactDate = (d: string | Date) => {
-  const dt = new Date(d);
-  return `${String(dt.getDate()).padStart(2, "0")} ${MONTHS_3[dt.getMonth()]} ${String(
-    dt.getFullYear(),
-  ).slice(-2)}`;
-};
+export const compactDate = formatCompactDate;
 
 export const dateTime = (d: string | Date) =>
   new Date(d).toLocaleString("en-IN", {
@@ -64,6 +36,8 @@ export const daysUntil = (d: string | Date) =>
 
 export const activeMembers = (s: GymState) => s.members.filter((m) => !m.deletedAt);
 export const trashedMembers = (s: GymState) => s.members.filter((m) => m.deletedAt);
+export const isWalkIn = (member: Member) => member.type === "walk_in";
+export const gymMembers = (s: GymState) => activeMembers(s).filter((m) => !isWalkIn(m));
 
 export const livePlans = (s: GymState) => s.plans.filter((p) => !p.deletedAt);
 export const trashedPlans = (s: GymState) => s.plans.filter((p) => p.deletedAt);
@@ -96,14 +70,26 @@ export function paidFor(s: GymState, membershipId: string) {
     .reduce((sum, p) => sum + p.amount, 0);
 }
 
+export function membershipPayable(membership: Membership) {
+  return membership.price - membership.discount + (membership.joiningFee ?? 0);
+}
+
 export function dueFor(s: GymState, memberId: string) {
   return s.memberships
     .filter((m) => m.memberId === memberId)
-    .reduce((sum, m) => sum + Math.max(0, m.price - m.discount - paidFor(s, m.id)), 0);
+    .reduce((sum, m) => sum + Math.max(0, membershipPayable(m) - paidFor(s, m.id)), 0);
+}
+
+export function productDueFor(s: GymState, memberId: string) {
+  return salesFor(s, memberId).reduce((sum, sale) => sum + saleDue(s, sale), 0);
+}
+
+export function outstandingFor(s: GymState, memberId: string) {
+  return dueFor(s, memberId) + productDueFor(s, memberId);
 }
 
 export function totalDue(s: GymState) {
-  return activeMembers(s).reduce((sum, m) => sum + dueFor(s, m.id), 0);
+  return activeMembers(s).reduce((sum, m) => sum + outstandingFor(s, m.id), 0);
 }
 
 export function totalRevenue(s: GymState, from?: Date) {
@@ -134,12 +120,10 @@ export const salesFor = (s: GymState, memberId: string) =>
 
 export const pendingSales = (s: GymState) => s.sales.filter((x) => saleDue(s, x) > 0);
 
-
-
 export function profitOfSales(s: GymState, from?: Date) {
   return s.sales
     .filter((x) => (from ? new Date(x.date) >= from : true))
-    .reduce((sum, x) => sum + (x.unitPrice - x.unitCost) * x.qty, 0);
+    .reduce((sum, x) => sum + x.total - x.unitCost * x.qty, 0);
 }
 
 export type Range = "daily" | "weekly" | "monthly" | "yearly";
@@ -157,7 +141,7 @@ export function revenueSeries(s: GymState, range: Range) {
       d.setHours(0, 0, 0, 0);
       const e = new Date(d);
       e.setHours(23, 59, 59, 999);
-      mk(d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }), d, e);
+      mk(formatDayMonth(d), d, e);
     }
   } else if (range === "weekly") {
     for (let i = 11; i >= 0; i--) {
@@ -173,7 +157,7 @@ export function revenueSeries(s: GymState, range: Range) {
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const e = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
-      mk(d.toLocaleDateString("en-IN", { month: "short" }), d, e);
+      mk(formatMonth(d), d, e);
     }
   } else {
     for (let i = 4; i >= 0; i--) {
@@ -201,7 +185,7 @@ export function planDistribution(s: GymState) {
   return livePlans(s)
     .map((plan) => ({
       name: plan.name,
-      value: activeMembers(s).filter((m) => currentMembership(s, m.id)?.planId === plan.id).length,
+      value: gymMembers(s).filter((m) => currentMembership(s, m.id)?.planId === plan.id).length,
     }))
     .filter((p) => p.value > 0);
 }
@@ -217,7 +201,7 @@ export function topProducts(s: GymState, limit = 5) {
     };
     entry.units += sale.qty;
     entry.revenue += sale.total;
-    entry.profit += (sale.unitPrice - sale.unitCost) * sale.qty;
+    entry.profit += sale.total - sale.unitCost * sale.qty;
     map.set(sale.productId, entry);
   });
   return Array.from(map.values())
@@ -265,7 +249,9 @@ export type Notification = {
 const birthdayOffset = (dob: string) => {
   const d = new Date(dob);
   const now = new Date();
-  const next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
+  if (next < today) next = new Date(now.getFullYear() + 1, d.getMonth(), d.getDate());
   const diff = Math.round((next.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / DAY);
   return diff;
 };
@@ -332,7 +318,7 @@ export function buildNotifications(s: GymState): Notification[] {
       }
     }
 
-    const bday = birthdayOffset(m.dob);
+    const bday = m.dob ? birthdayOffset(m.dob) : -1;
     if (bday === 0 || bday === 1) {
       list.push({
         id: `bday_${m.id}`,
@@ -361,7 +347,6 @@ export function buildNotifications(s: GymState): Notification[] {
         search: { sale: x.id },
       });
     });
-
 
   if (s.settings.lowStockAlerts) {
     lowStock(s).forEach((p) => {
@@ -459,9 +444,12 @@ export function rangeWindow(range: Range): { start: Date; end: Date } {
   end.setHours(23, 59, 59, 999);
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
-  if (range === "weekly") start.setDate(start.getDate() - 6);
-  if (range === "monthly") start.setDate(start.getDate() - 29);
-  if (range === "yearly") start.setMonth(start.getMonth() - 11);
+  if (range === "weekly") {
+    const daysSinceMonday = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - daysSinceMonday);
+  }
+  if (range === "monthly") start.setDate(1);
+  if (range === "yearly") start.setMonth(0, 1);
   return { start, end };
 }
 
@@ -496,7 +484,7 @@ export function expenseSeries(s: GymState, range: Range) {
       d.setHours(0, 0, 0, 0);
       const e = new Date(d);
       e.setHours(23, 59, 59, 999);
-      mk(d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }), d, e);
+      mk(formatDayMonth(d), d, e);
     }
   } else if (range === "weekly") {
     for (let i = 11; i >= 0; i--) {
@@ -512,7 +500,7 @@ export function expenseSeries(s: GymState, range: Range) {
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const e = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
-      mk(d.toLocaleDateString("en-IN", { month: "short" }), d, e);
+      mk(formatMonth(d), d, e);
     }
   } else {
     for (let i = 4; i >= 0; i--) {

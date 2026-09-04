@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Crop,
   Eye,
   FileText,
   Paperclip,
@@ -28,6 +29,8 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { TablePager } from "@/components/app/TablePager";
+import { AppDatePicker } from "@/components/app/AppDatePicker";
+import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,6 +52,7 @@ import {
   money,
   revenueInRange,
   shortDate,
+  inWindow,
   type Range,
 } from "@/lib/gym/selectors";
 import type { Expense, ExpenseAttachment, ExpenseCategory, PaymentMethod } from "@/lib/gym/types";
@@ -87,8 +91,9 @@ const CATEGORIES: ExpenseCategory[] = [
   "Other",
 ];
 
-const METHODS: PaymentMethod[] = ["cash", "card", "bank", "cheque", "other"];
+const METHODS: PaymentMethod[] = ["cash", "upi", "card", "bank", "cheque", "other"];
 const RANGES: Range[] = ["daily", "weekly", "monthly", "yearly"];
+type ExpenseRange = Range | "custom";
 const RANGE_LABEL: Record<Range, string> = {
   daily: "Today",
   weekly: "This week",
@@ -111,9 +116,60 @@ const PAGE_SIZE = 10;
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 
+const daysAgoInput = (days: number) => {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return localDateInput(date);
+};
+
+const dateWindow = (start: string, end: string) => ({
+  start: new Date(`${start}T00:00:00`),
+  end: new Date(`${end}T23:59:59.999`),
+});
+
+function customExpenseSeries(expenses: Expense[], start: string, end: string) {
+  const window = dateWindow(start, end);
+  if (window.end < window.start) return [];
+  const day = 86_400_000;
+  const spanDays = Math.floor((window.end.getTime() - window.start.getTime()) / day) + 1;
+  const bucketDays = spanDays <= 45 ? 1 : spanDays <= 370 ? 7 : 30;
+  const result: Array<{ label: string; total: number }> = [];
+  for (let cursor = new Date(window.start); cursor <= window.end;) {
+    const bucketStart = new Date(cursor);
+    const bucketEnd = new Date(cursor);
+    bucketEnd.setDate(bucketEnd.getDate() + bucketDays - 1);
+    bucketEnd.setHours(23, 59, 59, 999);
+    if (bucketEnd > window.end) bucketEnd.setTime(window.end.getTime());
+    result.push({
+      label:
+        bucketDays === 1
+          ? formatDayMonth(bucketStart)
+          : `${formatDayMonth(bucketStart)}–${formatDayMonth(bucketEnd)}`,
+      total: expenses
+        .filter((expense) => inWindow(expense.date, { start: bucketStart, end: bucketEnd }))
+        .reduce((sum, expense) => sum + expense.amount, 0),
+    });
+    cursor = new Date(bucketEnd);
+    cursor.setMilliseconds(cursor.getMilliseconds() + 1);
+  }
+  return result;
+}
+
+function categoryTotals(expenses: Expense[]) {
+  const totals = expenses.reduce<Record<string, number>>((all, expense) => {
+    all[expense.category] = (all[expense.category] ?? 0) + expense.amount;
+    return all;
+  }, {});
+  return Object.entries(totals)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+}
+
 function ExpensesPage() {
   const state = useGym();
-  const [range, setRange] = useState<Range>("monthly");
+  const [range, setRange] = useState<ExpenseRange>("monthly");
+  const [customStart, setCustomStart] = useState(daysAgoInput(29));
+  const [customEnd, setCustomEnd] = useState(localDateInput(new Date()));
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
@@ -121,23 +177,44 @@ function ExpensesPage() {
   const [confirm, setConfirm] = useState<Expense | null>(null);
   const [preview, setPreview] = useState<Expense | null>(null);
 
-  const scoped = useMemo(() => (state ? expensesInRange(state, range) : []), [state, range]);
+  const scoped = useMemo(() => {
+    if (!state) return [];
+    if (range !== "custom") return expensesInRange(state, range);
+    const window = dateWindow(customStart, customEnd);
+    if (window.end < window.start) return [];
+    return liveExpenses(state).filter((expense) => inWindow(expense.date, window));
+  }, [state, range, customStart, customEnd]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return scoped;
     return scoped.filter((e) =>
-      `${e.expenseNo} ${e.title} ${e.category} ${e.notes} ${e.method}`.toLowerCase().includes(needle),
+      `${e.expenseNo} ${e.title} ${e.category} ${e.notes} ${e.method}`
+        .toLowerCase()
+        .includes(needle),
     );
   }, [scoped, q]);
 
   if (!state) return null;
   const cur = state.settings.currency;
+  const customDateWindow = dateWindow(customStart, customEnd);
+  const customValid = customDateWindow.start <= customDateWindow.end;
+  const rangeLabel = range === "custom" ? "Custom range" : RANGE_LABEL[range];
 
-  const revenue = revenueInRange(state, range);
-  const expenses = expenseTotal(filtered);
+  const revenue =
+    range === "custom"
+      ? state.payments
+          .filter((payment) => customValid && inWindow(payment.date, customDateWindow))
+          .reduce((sum, payment) => sum + payment.amount, 0)
+      : revenueInRange(state, range);
+  // Search only narrows the table; finance cards must continue to represent
+  // the complete selected date range.
+  const expenses = expenseTotal(scoped);
   const profit = revenue - expenses;
-  const series = expenseSeries(state, range);
-  const byCategory = expenseByCategory(state, range);
+  const series =
+    range === "custom"
+      ? customExpenseSeries(scoped, customStart, customEnd)
+      : expenseSeries(state, range);
+  const byCategory = range === "custom" ? categoryTotals(scoped) : expenseByCategory(state, range);
   const paged = filtered
     .slice()
     .sort((a, b) => +new Date(b.date) - +new Date(a.date))
@@ -177,26 +254,62 @@ function ExpensesPage() {
             {r}
           </button>
         ))}
+        <button
+          onClick={() => {
+            setRange("custom");
+            setPage(1);
+          }}
+          className={`rounded-full border px-4 py-1.5 text-xs font-medium transition-colors ${
+            range === "custom"
+              ? "border-gold/50 bg-gold/15 text-gold"
+              : "border-border text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Custom
+        </button>
       </div>
+
+      {range === "custom" && (
+        <div className="mb-6 grid gap-4 rounded-2xl border border-gold/25 bg-secondary/25 p-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Start date</p>
+            <AppDatePicker value={customStart} onChange={setCustomStart} max={new Date()} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">End date</p>
+            <AppDatePicker
+              value={customEnd}
+              onChange={setCustomEnd}
+              min={new Date(`${customStart}T00:00:00`)}
+              max={new Date()}
+            />
+          </div>
+          {!customValid && (
+            <p className="text-xs text-destructive sm:col-span-2">
+              End date must be on or after the start date.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Metric
           icon={Wallet}
-          label={`Collected revenue · ${RANGE_LABEL[range]}`}
+          label={`Collected revenue · ${rangeLabel}`}
           value={money(revenue, cur)}
           hint="Membership payments + product sales"
           tone="success"
         />
         <Metric
           icon={TrendingDown}
-          label={`Total expenses · ${RANGE_LABEL[range]}`}
+          label={`Total expenses · ${rangeLabel}`}
           value={money(expenses, cur)}
           hint="Every expense entry in range"
           tone="warning"
         />
         <Metric
           icon={TrendingUp}
-          label={`Net profit · ${RANGE_LABEL[range]}`}
+          label={`Net profit · ${rangeLabel}`}
           value={money(profit, cur)}
           hint="Revenue − Expenses"
           tone={profit >= 0 ? "gold" : "warning"}
@@ -209,8 +322,20 @@ function ExpensesPage() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={series}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="label" stroke="#8b8b8b" fontSize={10} tickLine={false} axisLine={false} />
-                <YAxis stroke="#8b8b8b" fontSize={11} tickLine={false} axisLine={false} width={56} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#8b8b8b"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="#8b8b8b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                />
                 <Tooltip
                   cursor={{ fill: "rgba(212,175,55,0.08)" }}
                   contentStyle={{
@@ -245,7 +370,11 @@ function ExpensesPage() {
                       cornerRadius={6}
                     >
                       {byCategory.map((_, i) => (
-                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="transparent" />
+                        <Cell
+                          key={i}
+                          fill={CHART_COLORS[i % CHART_COLORS.length]}
+                          stroke="transparent"
+                        />
                       ))}
                     </Pie>
                     <Tooltip
@@ -299,7 +428,10 @@ function ExpensesPage() {
 
         <div className="mt-5 overflow-x-auto">
           {paged.length === 0 ? (
-            <EmptyState title="No expenses found" hint="Adjust the filter or record a new expense." />
+            <EmptyState
+              title="No expenses found"
+              hint="Adjust the filter or record a new expense."
+            />
           ) : (
             <table className="w-full min-w-[860px] text-sm">
               <thead>
@@ -390,8 +522,8 @@ function ExpensesPage() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            <strong>{confirm?.title}</strong> will be moved to Trash and stays recoverable for 30 days.
-            It is never permanently deleted from here.
+            <strong>{confirm?.title}</strong> will be moved to Trash and stays recoverable for 30
+            days. It is never permanently deleted from here.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirm(null)}>
@@ -502,9 +634,17 @@ function ExpenseFormDialog({
   const [date, setDate] = useState(expense ? expense.date.slice(0, 10) : todayInput());
   const [method, setMethod] = useState<PaymentMethod>(expense?.method ?? "cash");
   const [notes, setNotes] = useState(expense?.notes ?? "");
-  const [attachment, setAttachment] = useState<ExpenseAttachment | null>(expense?.attachment ?? null);
+  const [attachment, setAttachment] = useState<ExpenseAttachment | null>(
+    expense?.attachment ?? null,
+  );
+  const [cropFile, setCropFile] = useState<{
+    source: string;
+    name: string;
+    type: string;
+  } | null>(null);
   const [loadedKey, setLoadedKey] = useState(key);
   const fileRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
 
   if (loadedKey !== key) {
     setLoadedKey(key);
@@ -540,21 +680,24 @@ function ExpenseFormDialog({
       return;
     }
     const reader = new FileReader();
-    reader.onload = () =>
-      setAttachment({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        dataUrl: String(reader.result),
-      });
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      if (file.type === "application/pdf") {
+        setAttachment({ name: file.name, type: file.type, size: file.size, dataUrl });
+      } else {
+        setCropFile({ source: dataUrl, name: file.name, type: file.type });
+      }
+    };
     reader.readAsDataURL(file);
   };
 
   const submit = () => {
+    if (submittingRef.current) return;
     if (!valid) {
       toast.error(errors.title || errors.amount || errors.date);
       return;
     }
+    submittingRef.current = true;
     const payload = {
       title,
       category,
@@ -564,14 +707,18 @@ function ExpenseFormDialog({
       notes,
       attachment,
     };
-    if (expense) {
-      updateExpense(expense.id, payload);
-      toast.success("Expense updated");
-    } else {
-      addExpense(payload);
-      toast.success("Expense recorded");
+    try {
+      if (expense) {
+        updateExpense(expense.id, payload);
+        toast.success("Expense updated");
+      } else {
+        addExpense(payload);
+        toast.success("Expense recorded");
+      }
+      onOpenChange(false);
+    } finally {
+      submittingRef.current = false;
     }
-    onOpenChange(false);
   };
 
   return (
@@ -594,7 +741,7 @@ function ExpenseFormDialog({
             {errors.title && <p className="text-xs text-destructive">{errors.title}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Category</Label>
               <Select value={category} onValueChange={(v) => setCategory(v as ExpenseCategory)}>
@@ -627,7 +774,7 @@ function ExpenseFormDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Amount</Label>
               <Input
@@ -640,11 +787,11 @@ function ExpenseFormDialog({
             </div>
             <div className="space-y-2">
               <Label>Date</Label>
-              <Input
-                type="date"
+              <AppDatePicker
                 value={date}
-                max={todayInput()}
-                onChange={(e) => setDate(e.target.value)}
+                max={new Date()}
+                onChange={setDate}
+                placeholder="Select expense date"
               />
               {errors.date && <p className="text-xs text-destructive">{errors.date}</p>}
             </div>
@@ -667,7 +814,10 @@ function ExpenseFormDialog({
               type="file"
               accept="application/pdf,image/jpeg,image/png"
               className="hidden"
-              onChange={(e) => pickFile(e.target.files?.[0])}
+              onChange={(e) => {
+                pickFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
             />
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
@@ -715,6 +865,220 @@ function ExpenseFormDialog({
             </Button>
           </div>
         </div>
+
+        <ExpenseImageCropDialog
+          file={cropFile}
+          onCancel={() => setCropFile(null)}
+          onComplete={(cropped) => {
+            setAttachment(cropped);
+            setCropFile(null);
+            toast.success("Image cropped and ready");
+          }}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type CropRect = { x: number; y: number; width: number; height: number };
+type CropHandle = "move" | "nw" | "ne" | "sw" | "se";
+
+function ExpenseImageCropDialog({
+  file,
+  onCancel,
+  onComplete,
+}: {
+  file: { source: string; name: string; type: string } | null;
+  onCancel: () => void;
+  onComplete: (attachment: ExpenseAttachment) => void;
+}) {
+  const [rect, setRect] = useState<CropRect>({ x: 5, y: 5, width: 90, height: 90 });
+  const [saving, setSaving] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const dragRef = useRef<{
+    handle: CropHandle;
+    clientX: number;
+    clientY: number;
+    rect: CropRect;
+  } | null>(null);
+  useEffect(() => {
+    setRect({ x: 5, y: 5, width: 90, height: 90 });
+    setSaving(false);
+    dragRef.current = null;
+  }, [file?.source]);
+
+  const startDrag = (event: React.PointerEvent, handle: CropHandle) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { handle, clientX: event.clientX, clientY: event.clientY, rect };
+  };
+
+  const drag = (event: React.PointerEvent) => {
+    const active = dragRef.current;
+    const image = imageRef.current;
+    if (!active || !image) return;
+    const bounds = image.getBoundingClientRect();
+    const dx = ((event.clientX - active.clientX) / bounds.width) * 100;
+    const dy = ((event.clientY - active.clientY) / bounds.height) * 100;
+    const start = active.rect;
+    const minimum = 8;
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+    if (active.handle === "move") {
+      setRect({
+        ...start,
+        x: clamp(start.x + dx, 0, 100 - start.width),
+        y: clamp(start.y + dy, 0, 100 - start.height),
+      });
+      return;
+    }
+
+    let left = start.x;
+    let top = start.y;
+    let right = start.x + start.width;
+    let bottom = start.y + start.height;
+    if (active.handle.includes("w")) left = clamp(start.x + dx, 0, right - minimum);
+    if (active.handle.includes("e")) right = clamp(right + dx, left + minimum, 100);
+    if (active.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - minimum);
+    if (active.handle.includes("s")) bottom = clamp(bottom + dy, top + minimum, 100);
+    setRect({ x: left, y: top, width: right - left, height: bottom - top });
+  };
+
+  const saveCrop = () => {
+    const image = imageRef.current;
+    if (!file || !image) return;
+    setSaving(true);
+    const sourceX = Math.round((rect.x / 100) * image.naturalWidth);
+    const sourceY = Math.round((rect.y / 100) * image.naturalHeight);
+    const sourceWidth = Math.max(1, Math.round((rect.width / 100) * image.naturalWidth));
+    const sourceHeight = Math.max(1, Math.round((rect.height / 100) * image.naturalHeight));
+    const scale = Math.min(1, 1800 / Math.max(sourceWidth, sourceHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setSaving(false);
+      toast.error("Image could not be cropped. Please try again.");
+      return;
+    }
+    context.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+    const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setSaving(false);
+          toast.error("Image could not be cropped. Please try again.");
+          return;
+        }
+        if (blob.size > MAX_ATTACHMENT) {
+          setSaving(false);
+          toast.error("Cropped image must be 5 MB or smaller");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          setSaving(false);
+          onComplete({
+            name: file.name.replace(/(\.[^.]+)?$/, "-cropped$1"),
+            type: outputType,
+            size: blob.size,
+            dataUrl: String(reader.result),
+          });
+        };
+        reader.onerror = () => {
+          setSaving(false);
+          toast.error("Cropped image could not be saved");
+        };
+        reader.readAsDataURL(blob);
+      },
+      outputType,
+      0.9,
+    );
+  };
+
+  return (
+    <Dialog open={Boolean(file)} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-display text-2xl tracking-wide">
+            <Crop className="h-5 w-5 text-gold" /> Crop attachment
+          </DialogTitle>
+        </DialogHeader>
+        {file && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Drag inside the frame to move it. Drag any of the four corner points to resize it.
+            </p>
+            <div className="flex max-h-[56vh] justify-center overflow-auto rounded-2xl border border-border bg-black/70 p-3">
+              <div className="relative inline-block touch-none select-none overflow-hidden">
+                <img
+                  ref={imageRef}
+                  src={file.source}
+                  alt="Attachment crop preview"
+                  draggable={false}
+                  className="block max-h-[50vh] max-w-full object-contain"
+                />
+                <div
+                  className="absolute cursor-move touch-none border-2 border-gold shadow-[0_0_0_1px_rgba(255,255,255,0.65)]"
+                  style={{
+                    left: `${rect.x}%`,
+                    top: `${rect.y}%`,
+                    width: `${rect.width}%`,
+                    height: `${rect.height}%`,
+                    boxShadow:
+                      "0 0 0 1px rgba(255,255,255,0.65), 0 0 0 9999px rgba(0,0,0,0.55)",
+                  }}
+                  onPointerDown={(event) => startDrag(event, "move")}
+                  onPointerMove={drag}
+                  onPointerUp={() => (dragRef.current = null)}
+                  onPointerCancel={() => (dragRef.current = null)}
+                >
+                  {(["nw", "ne", "sw", "se"] as const).map((handle) => (
+                    <span
+                      key={handle}
+                      role="slider"
+                      aria-label={`${handle.toUpperCase()} crop corner`}
+                      tabIndex={0}
+                      className={`absolute h-5 w-5 rounded-full border-2 border-black bg-gold shadow-md ${
+                        handle === "nw"
+                          ? "-left-2.5 -top-2.5 cursor-nwse-resize"
+                          : handle === "ne"
+                            ? "-right-2.5 -top-2.5 cursor-nesw-resize"
+                            : handle === "sw"
+                              ? "-bottom-2.5 -left-2.5 cursor-nesw-resize"
+                              : "-bottom-2.5 -right-2.5 cursor-nwse-resize"
+                      }`}
+                      onPointerDown={(event) => startDrag(event, handle)}
+                      onPointerMove={drag}
+                      onPointerUp={() => (dragRef.current = null)}
+                      onPointerCancel={() => (dragRef.current = null)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={onCancel}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={saving} onClick={saveCrop}>
+                <Crop className="mr-2 h-4 w-4" /> {saving ? "Cropping..." : "Use cropped image"}
+              </Button>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

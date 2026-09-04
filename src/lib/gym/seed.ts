@@ -1,6 +1,8 @@
 import type {
   Activity,
+  Expense,
   GymState,
+  Inquiry,
   Member,
   Membership,
   Payment,
@@ -20,7 +22,7 @@ export const addDays = (base: Date, days: number) => {
   return d;
 };
 
-const pick = <T,>(arr: T[], i: number) => arr[i % arr.length];
+const pick = <T>(arr: T[], i: number) => arr[i % arr.length];
 
 /** Deterministic-ish pseudo random so the seed feels natural but stable enough. */
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -30,6 +32,7 @@ const PLANS: Plan[] = [
     id: "plan_monthly",
     name: "Monthly Strength",
     price: 1500,
+    joiningFee: 1000,
     durationDays: 30,
     description: "Full gym floor access, locker and one body composition check.",
     active: true,
@@ -38,6 +41,7 @@ const PLANS: Plan[] = [
     id: "plan_quarterly",
     name: "Quarterly Power",
     price: 4000,
+    joiningFee: 1000,
     durationDays: 90,
     description: "Gym floor, group classes and monthly progress tracking.",
     active: true,
@@ -46,6 +50,7 @@ const PLANS: Plan[] = [
     id: "plan_halfyear",
     name: "Half Yearly Elite",
     price: 7200,
+    joiningFee: 1000,
     durationDays: 180,
     description: "All classes, sauna access and quarterly diet consultation.",
     active: true,
@@ -54,6 +59,7 @@ const PLANS: Plan[] = [
     id: "plan_annual",
     name: "Annual Platinum",
     price: 12000,
+    joiningFee: 1000,
     durationDays: 365,
     description: "Unlimited access, personal trainer sessions and priority booking.",
     active: true,
@@ -62,6 +68,7 @@ const PLANS: Plan[] = [
     id: "plan_pt",
     name: "Personal Training",
     price: 9000,
+    joiningFee: 1000,
     durationDays: 60,
     description: "24 one-to-one coaching sessions with a certified trainer.",
     active: true,
@@ -370,6 +377,7 @@ export function buildSeed(): GymState {
         endDate: iso(prevEnd),
         price: plan.price,
         discount: 0,
+        joiningFee: 0,
         frozen: false,
         createdAt: iso(prevStart),
       });
@@ -395,12 +403,13 @@ export function buildSeed(): GymState {
       endDate: iso(end),
       price: plan.price,
       discount: i % 5 === 0 ? 200 : 0,
+      joiningFee: 1000,
       frozen: Boolean(seed.frozen),
       frozenAt: seed.frozen ? iso(addDays(now, -9)) : null,
       createdAt: iso(start),
     });
 
-    const payable = plan.price - (i % 5 === 0 ? 200 : 0);
+    const payable = plan.price - (i % 5 === 0 ? 200 : 0) + 1000;
     const paid = Math.round(payable * seed.paidRatio);
     if (paid > 0) {
       payments.push({
@@ -488,6 +497,65 @@ export function buildSeed(): GymState {
     });
   });
 
+  const expenseSeed: Array<[string, Expense["category"], number, number, Expense["method"]]> = [
+    ["Monthly facility rent", "Rent", 85000, 2, "bank"],
+    ["Trainer salaries", "Salaries", 68000, 4, "bank"],
+    ["Electricity and water", "Utilities", 12450, 7, "bank"],
+    ["Equipment servicing", "Maintenance", 7800, 12, "cash"],
+    ["Cleaning supplies", "Supplies", 3250, 16, "cash"],
+    ["Social media promotion", "Marketing", 6000, 21, "card"],
+    ["Monthly facility rent", "Rent", 85000, 33, "bank"],
+    ["Trainer salaries", "Salaries", 68000, 35, "bank"],
+    ["Replacement dumbbells", "Equipment", 18500, 41, "card"],
+    ["Electricity and water", "Utilities", 11820, 45, "bank"],
+    ["Quarterly fire inspection", "Maintenance", 4500, 63, "cheque"],
+    ["Member welcome kits", "Supplies", 9200, 78, "card"],
+  ];
+  const expenses: Expense[] = expenseSeed.map(([title, category, amount, daysAgo, method], i) => ({
+    id: `exp_seed_${i + 1}`,
+    expenseNo: `EXP-${String(i + 1).padStart(6, "0")}`,
+    title,
+    category,
+    amount,
+    date: iso(addDays(now, -daysAgo)),
+    method,
+    notes: "Starter record for offline reporting and cash-flow analysis.",
+    attachment: null,
+    createdAt: iso(addDays(now, -daysAgo)),
+    deletedAt: null,
+  }));
+
+  const inquiries: Inquiry[] = [
+    {
+      id: "inq_demo_aarav",
+      name: "Aarav Sharma",
+      phone: "+977 9812345678",
+      email: "aarav.sharma@example.com",
+      source: "referral",
+      interest: "Monthly Strength",
+      status: "new",
+      priority: "hot",
+      nextFollowUp: iso(addDays(now, 1)),
+      notes: "Interested in an evening workout schedule and a facility tour.",
+      createdAt: iso(addDays(now, -1)),
+      updatedAt: iso(addDays(now, -1)),
+    },
+    {
+      id: "inq_demo_sita",
+      name: "Sita Gurung",
+      phone: "+977 9807654321",
+      email: "sita.gurung@example.com",
+      source: "instagram",
+      interest: "Personal Training",
+      status: "follow_up",
+      priority: "warm",
+      nextFollowUp: iso(now),
+      notes: "Requested pricing details and a trainer consultation.",
+      createdAt: iso(addDays(now, -4)),
+      updatedAt: iso(addDays(now, -1)),
+    },
+  ];
+
   return {
     version: 1,
     // sha-256 of "admin123"
@@ -506,6 +574,8 @@ export function buildSeed(): GymState {
       lowStockAlerts: true,
       expiryReminderDays: 7,
       adminName: "Gym Owner",
+      calendarSystem: "gregorian",
+      phoneCountry: "india",
     },
     members,
     plans: PLANS,
@@ -514,9 +584,9 @@ export function buildSeed(): GymState {
     products,
     sales,
     activities,
-    expenses: [],
+    expenses,
+    inquiries,
     readNotifications: [],
     invoiceSeq,
-
   };
 }

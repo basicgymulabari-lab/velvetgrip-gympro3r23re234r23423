@@ -4,12 +4,19 @@ import { Dumbbell, Loader2, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isLoggedIn, login } from "@/lib/gym/store";
+import {
+  completeCloudLogin,
+  getState,
+  isLoggedIn,
+  login,
+  receptionistLoginIssue,
+} from "@/lib/gym/store";
+import { signInWithGoogle } from "@/lib/gym/cloud";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Admin Sign In — IRONVAULT Gym Management" },
+      { title: "Staff Sign In — IRONVAULT Gym Management" },
       {
         name: "description",
         content:
@@ -33,8 +40,35 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (isLoggedIn()) navigate({ to: "/" });
+    let active = true;
+    const finishSignIn = async () => {
+      if (isLoggedIn()) {
+        navigate({ to: "/" });
+        return;
+      }
+      try {
+        const connected = await completeCloudLogin();
+        if (active && connected) navigate({ to: "/" });
+      } catch (cloudError) {
+        console.error(cloudError);
+        if (active) setError("Cloud sign-in completed, but the workspace could not be loaded.");
+      }
+    };
+    void finishSignIn();
+    return () => {
+      active = false;
+    };
   }, [navigate]);
+
+  const googleSignIn = async () => {
+    setError("");
+    setBusy(true);
+    const { error: oauthError } = await signInWithGoogle();
+    if (oauthError) {
+      setError(oauthError.message);
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,11 +77,20 @@ function LoginPage() {
       setError("Enter a valid email and password (min 4 characters).");
       return;
     }
+    if (email.trim().toLowerCase() === getState().auth.email.toLowerCase()) {
+      setError("Gym owners must use Continue with Google.");
+      return;
+    }
     setBusy(true);
     const ok = await login(email, password);
     setBusy(false);
     if (ok) navigate({ to: "/" });
-    else setError("Invalid credentials. Please try again.");
+    else {
+      const isAdminEmail = email.trim().toLowerCase() === getState().auth.email.toLowerCase();
+      setError(
+        isAdminEmail ? "Administrator password is incorrect." : await receptionistLoginIssue(email),
+      );
+    }
   };
 
   return (
@@ -75,15 +118,15 @@ function LoginPage() {
               <span className="text-gradient-gold">premium brand.</span>
             </h2>
             <p className="mt-4 max-w-sm text-sm text-muted-foreground">
-              Members, memberships, payments, inventory and reporting — all in one elegant,
-              fully offline workspace. No cloud, no external services.
+              Members, memberships, payments, inventory and reporting — all in one elegant, fully
+              synchronized workspace, protected by your Google account.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-4 border-t border-border pt-6 text-center">
             {[
-              ["100%", "Offline"],
-              ["0", "External APIs"],
-              ["1", "Admin role"],
+              ["Live", "Cloud sync"],
+              ["1", "Secure backend"],
+              ["2", "Staff roles"],
             ].map(([v, l]) => (
               <div key={l}>
                 <p className="font-display text-2xl text-gold">{v}</p>
@@ -94,12 +137,29 @@ function LoginPage() {
         </div>
 
         <div className="flex flex-col justify-center bg-card p-8 sm:p-10 lg:min-h-[560px]">
-          <h1 className="font-display text-3xl tracking-wide">Admin Sign In</h1>
+          <h1 className="font-display text-3xl tracking-wide">Staff Sign In</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Enter your credentials to access the management suite.
+            Owners sign in with Google. Receptionists use their staff credentials.
           </p>
 
-          <form onSubmit={submit} className="mt-8 space-y-5">
+          <Button
+            type="button"
+            variant="secondary"
+            className="mt-8 h-11 w-full border border-border font-semibold"
+            disabled={busy}
+            onClick={googleSignIn}
+          >
+            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Continue with Google
+          </Button>
+
+          <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            Receptionist sign in
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
+          <form onSubmit={submit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">Email address</Label>
               <div className="relative">

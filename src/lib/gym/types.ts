@@ -1,6 +1,7 @@
 export type ID = string;
 
 export type Gender = "male" | "female" | "other";
+export type PersonType = "member" | "walk_in";
 
 export type ProgressNote = {
   id: ID;
@@ -22,6 +23,8 @@ export type Measurement = {
 
 export type Member = {
   id: ID;
+  /** Absent on legacy records, which are treated as regular members. */
+  type?: PersonType;
   name: string;
   email: string;
   phone: string;
@@ -41,6 +44,8 @@ export type Plan = {
   id: ID;
   name: string;
   price: number;
+  /** Default one-time joining fee used when registering a new member. */
+  joiningFee?: number;
   durationDays: number;
   description: string;
   active: boolean;
@@ -57,12 +62,14 @@ export type Membership = {
   endDate: string;
   price: number;
   discount: number;
+  /** Joining fee charged for this specific membership term. */
+  joiningFee?: number;
   frozen: boolean;
   frozenAt?: string | null;
   createdAt: string;
 };
 
-export type PaymentMethod = "cash" | "card" | "bank" | "cheque" | "other";
+export type PaymentMethod = "cash" | "upi" | "card" | "bank" | "cheque" | "other";
 
 export type Payment = {
   id: ID;
@@ -77,12 +84,7 @@ export type Payment = {
   note: string;
 };
 
-export type ProductCategory =
-  | "Supplements"
-  | "Apparel"
-  | "Accessories"
-  | "Equipment"
-  | "Beverages";
+export type ProductCategory = "Supplements" | "Apparel" | "Accessories" | "Equipment" | "Beverages";
 
 export type Product = {
   id: ID;
@@ -150,6 +152,26 @@ export type Expense = {
   deletedAt?: string | null;
 };
 
+export type InquiryStatus = "new" | "contacted" | "trial" | "follow_up" | "converted" | "lost";
+export type InquiryPriority = "hot" | "warm" | "cold";
+export type InquirySource =
+  "walk_in" | "referral" | "instagram" | "facebook" | "google" | "phone" | "website" | "other";
+
+export type Inquiry = {
+  id: ID;
+  name: string;
+  phone: string;
+  email?: string;
+  source: InquirySource;
+  interest: string;
+  status: InquiryStatus;
+  priority: InquiryPriority;
+  nextFollowUp?: string | null;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ActivityType =
   | "member_added"
   | "membership_renewed"
@@ -163,7 +185,10 @@ export type ActivityType =
   | "member_deleted"
   | "expense_added"
   | "expense_updated"
-  | "expense_trashed";
+  | "expense_trashed"
+  | "inquiry_added"
+  | "inquiry_updated"
+  | "inquiry_deleted";
 
 export type Activity = {
   id: ID;
@@ -172,7 +197,6 @@ export type Activity = {
   description: string;
   date: string;
 };
-
 
 export type Settings = {
   gymName: string;
@@ -186,11 +210,36 @@ export type Settings = {
   expiryReminderDays: number;
   adminName: string;
   revenueCardMetric?: "today" | "weekly" | "monthly" | "yearly" | "total";
+  calendarSystem?: CalendarSystem;
+  phoneCountry?: PhoneCountry;
+};
+
+export type CalendarSystem = "gregorian" | "bikram_sambat";
+export type PhoneCountry = "nepal" | "india" | "usa";
+
+export type ReceptionistPermissions = {
+  dashboard: boolean;
+  members: boolean;
+  memberships: boolean;
+  payments: boolean;
+  products: boolean;
+  inquiries: boolean;
+  notifications: boolean;
+  viewRevenue: boolean;
+};
+
+export type ReceptionistAccount = {
+  enabled: boolean;
+  name: string;
+  email: string;
+  passwordHash: string;
+  permissions?: ReceptionistPermissions;
 };
 
 export type GymState = {
   version: number;
   auth: { passwordHash: string; email: string };
+  staff?: { receptionist?: ReceptionistAccount };
   settings: Settings;
   members: Member[];
   plans: Plan[];
@@ -200,8 +249,8 @@ export type GymState = {
   sales: Sale[];
   activities: Activity[];
   expenses: Expense[];
+  inquiries: Inquiry[];
   readNotifications: string[];
-
 
   invoiceSeq: number;
 };

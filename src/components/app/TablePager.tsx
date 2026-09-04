@@ -17,15 +17,15 @@ export function TablePager({
   const to = Math.min(total, page * pageSize);
 
   return (
-    <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+    <div className="mt-4 flex flex-col items-start gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <p className="truncate text-xs text-muted-foreground">
         Showing {from}–{to} of {total}
       </p>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
         <Button
           variant="secondary"
           size="icon"
-          className="h-8 w-8"
+          className="h-10 w-10 sm:h-8 sm:w-8"
           disabled={page <= 1}
           onClick={() => onPage(page - 1)}
           aria-label="Previous page"
@@ -38,7 +38,7 @@ export function TablePager({
         <Button
           variant="secondary"
           size="icon"
-          className="h-8 w-8"
+          className="h-10 w-10 sm:h-8 sm:w-8"
           disabled={page >= pages}
           onClick={() => onPage(page + 1)}
           aria-label="Next page"

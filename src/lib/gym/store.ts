@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { buildSeed, uid, iso } from "./seed";
+import { configureCalendarSystem } from "./calendar";
+import { phoneForCountry } from "./phone";
+import { membershipEndDate } from "./membership";
 import type {
   Activity,
   ActivityType,
@@ -7,20 +10,106 @@ import type {
   Member,
   Membership,
   Payment,
+  PaymentMethod,
   Plan,
   Product,
   Sale,
   Expense,
+  Inquiry,
+  InquiryPriority,
+  InquirySource,
+  InquiryStatus,
+  ReceptionistAccount,
+  ReceptionistPermissions,
   Settings,
 } from "./types";
+import { getCloudIdentity, loadCloudState, saveCloudState, signOutFromCloud } from "./cloud";
 
 const DB_KEY = "ironvault.db.v1";
 const SESSION_KEY = "ironvault.session.v1";
+const RECEPTIONIST_KEY = "ironvault.receptionist.v1";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 let state: GymState | null = null;
 const listeners = new Set<() => void>();
+let cloudOwnerId: string | null = null;
+let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 const isBrowser = () => typeof window !== "undefined";
+const normalizedPhone = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+function receptionistFromLocalStorage(): ReceptionistAccount | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(RECEPTIONIST_KEY);
+    return raw ? (JSON.parse(raw) as ReceptionistAccount) : null;
+  } catch {
+    return null;
+  }
+}
+
+function openAuthDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open("ironvault-auth", 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains("accounts")) {
+        request.result.createObjectStore("accounts");
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function persistReceptionist(account: ReceptionistAccount) {
+  if (!isBrowser()) return true;
+  try {
+    window.localStorage.setItem(RECEPTIONIST_KEY, JSON.stringify(account));
+    return true;
+  } catch {
+    // Large member photos or attachments can fill localStorage. Use IndexedDB for auth fallback.
+  }
+  if (!window.indexedDB) return false;
+  try {
+    const database = await openAuthDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("accounts", "readwrite");
+      transaction.objectStore("accounts").put(account, "receptionist");
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    database.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadPersistedReceptionist(): Promise<ReceptionistAccount | null> {
+  const local = receptionistFromLocalStorage();
+  if (local) return local;
+  if (!isBrowser() || !window.indexedDB) return null;
+  try {
+    const database = await openAuthDatabase();
+    const account = await new Promise<ReceptionistAccount | null>((resolve, reject) => {
+      const request = database
+        .transaction("accounts", "readonly")
+        .objectStore("accounts")
+        .get("receptionist");
+      request.onsuccess = () =>
+        resolve((request.result as ReceptionistAccount | undefined) ?? null);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return account;
+  } catch {
+    return null;
+  }
+}
 
 function persist() {
   if (!isBrowser() || !state) return;
@@ -29,6 +118,17 @@ function persist() {
   } catch {
     /* storage full or unavailable — keep in-memory state */
   }
+}
+
+function scheduleCloudSave(nextState: GymState) {
+  if (!cloudOwnerId) return;
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(() => {
+    if (!cloudOwnerId) return;
+    void saveCloudState(cloudOwnerId, nextState).catch((error) => {
+      console.error("Unable to sync the gym workspace to Supabase", error);
+    });
+  }, 500);
 }
 
 function emit() {
@@ -42,16 +142,25 @@ function init() {
     if (raw) {
       const parsed = JSON.parse(raw) as GymState;
       if (parsed && parsed.version === 1) {
-        state = { ...parsed, expenses: parsed.expenses ?? [] };
+        state = {
+          ...parsed,
+          expenses: parsed.expenses ?? [],
+          inquiries: parsed.inquiries ?? buildSeed().inquiries,
+          staff: {
+            ...(parsed.staff ?? {}),
+            receptionist: receptionistFromLocalStorage() ?? parsed.staff?.receptionist,
+          },
+        };
+        configureCalendarSystem(state.settings.calendarSystem);
         purgeOldTrash();
         return;
       }
     }
-
   } catch {
     /* corrupt payload — fall through to a fresh seed */
   }
   state = buildSeed();
+  configureCalendarSystem(state.settings.calendarSystem);
   persist();
 }
 
@@ -59,7 +168,9 @@ function setState(updater: (s: GymState) => GymState) {
   if (!state) init();
   if (!state) return;
   state = updater(state);
+  configureCalendarSystem(state.settings.calendarSystem);
   persist();
+  scheduleCloudSave(state);
   emit();
 }
 
@@ -94,35 +205,192 @@ export async function sha256(text: string) {
 }
 
 export async function login(email: string, password: string) {
-  const s = getState();
-  const hash = await sha256(password);
-  const ok = email.trim().toLowerCase() === s.auth.email.toLowerCase() && hash === s.auth.passwordHash;
-  if (ok && isBrowser()) {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ at: Date.now(), email }));
-    window.localStorage.setItem(SESSION_KEY, JSON.stringify({ at: Date.now(), email }));
+  let s = getState();
+  const hash = await sha256(password.trim());
+  const normalizedEmail = email.trim().toLowerCase();
+  let receptionist = s.staff?.receptionist;
+  if (!receptionist || normalizedEmail !== receptionist.email.toLowerCase()) {
+    const persisted = await loadPersistedReceptionist();
+    if (persisted) {
+      receptionist = persisted;
+      setState((current) => ({
+        ...current,
+        staff: { ...current.staff, receptionist: persisted },
+      }));
+      s = getState();
+    }
+  }
+  const isAdmin = normalizedEmail === s.auth.email.toLowerCase() && hash === s.auth.passwordHash;
+  const isReceptionist = Boolean(
+    receptionist?.enabled &&
+    normalizedEmail === receptionist.email.toLowerCase() &&
+    hash === receptionist.passwordHash,
+  );
+  if ((isAdmin || isReceptionist) && isBrowser()) {
+    const session = JSON.stringify({
+      at: Date.now(),
+      expiresAt: Date.now() + SESSION_TTL_MS,
+      email: normalizedEmail,
+      role: isReceptionist ? "receptionist" : "admin",
+    });
+    window.sessionStorage.setItem(SESSION_KEY, session);
+    window.localStorage.setItem(SESSION_KEY, session);
     emit();
   }
-  return ok;
+  return isAdmin || isReceptionist;
 }
 
 export function logout() {
   if (!isBrowser()) return;
+  cloudOwnerId = null;
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = null;
   window.sessionStorage.removeItem(SESSION_KEY);
   window.localStorage.removeItem(SESSION_KEY);
+  void signOutFromCloud().catch(() => undefined);
   emit();
 }
 
-export function isLoggedIn() {
+export async function completeCloudLogin() {
   if (!isBrowser()) return false;
-  return Boolean(
-    window.sessionStorage.getItem(SESSION_KEY) || window.localStorage.getItem(SESSION_KEY),
-  );
+  const identity = await getCloudIdentity();
+  if (!identity) return false;
+
+  const cloudState = await loadCloudState(identity.id);
+  if (cloudState?.version === 1) {
+    state = {
+      ...cloudState,
+      expenses: cloudState.expenses ?? [],
+      inquiries: cloudState.inquiries ?? buildSeed().inquiries,
+      staff: cloudState.staff ?? {},
+    };
+    configureCalendarSystem(state.settings.calendarSystem);
+    persist();
+  } else {
+    await saveCloudState(identity.id, getState());
+  }
+
+  cloudOwnerId = identity.id;
+  const session = JSON.stringify({
+    at: Date.now(),
+    expiresAt: Date.now() + SESSION_TTL_MS,
+    email: identity.email.toLowerCase(),
+    role: "admin",
+    cloudUserId: identity.id,
+  });
+  window.sessionStorage.setItem(SESSION_KEY, session);
+  window.localStorage.setItem(SESSION_KEY, session);
+  emit();
+  return true;
+}
+
+export function isLoggedIn() {
+  return getCurrentSession() !== null;
+}
+
+export type CurrentSession = {
+  email: string;
+  role: "admin" | "receptionist";
+  name: string;
+  permissions?: ReceptionistPermissions;
+};
+
+export const DEFAULT_RECEPTIONIST_PERMISSIONS: ReceptionistPermissions = {
+  dashboard: true,
+  members: true,
+  memberships: true,
+  payments: true,
+  products: true,
+  inquiries: true,
+  notifications: true,
+  viewRevenue: false,
+};
+
+export function getCurrentSession(): CurrentSession | null {
+  if (!isBrowser()) return null;
+  const raw =
+    window.sessionStorage.getItem(SESSION_KEY) || window.localStorage.getItem(SESSION_KEY);
+  if (!raw) return null;
+  try {
+    const session = JSON.parse(raw) as {
+      at?: unknown;
+      expiresAt?: unknown;
+      email?: unknown;
+      role?: unknown;
+      cloudUserId?: unknown;
+    };
+    const at = typeof session.at === "number" ? session.at : 0;
+    const expiresAt =
+      typeof session.expiresAt === "number" ? session.expiresAt : at + SESSION_TTL_MS;
+    const s = getState();
+    const email = typeof session.email === "string" ? session.email.toLowerCase() : "";
+    const receptionist = s.staff?.receptionist;
+    const role = session.role === "receptionist" ? "receptionist" : "admin";
+    const cloudUserId = typeof session.cloudUserId === "string" ? session.cloudUserId : "";
+    const identityValid =
+      role === "admin"
+        ? Boolean(cloudUserId) || email === s.auth.email.toLowerCase()
+        : Boolean(receptionist?.enabled && email === receptionist.email.toLowerCase());
+    if (identityValid && at > 0 && expiresAt > Date.now()) {
+      if (cloudUserId) cloudOwnerId = cloudUserId;
+      return {
+        email,
+        role,
+        name: role === "admin" ? s.settings.adminName : receptionist?.name || "Receptionist",
+        permissions:
+          role === "receptionist"
+            ? { ...DEFAULT_RECEPTIONIST_PERMISSIONS, ...receptionist?.permissions }
+            : undefined,
+      };
+    }
+  } catch {
+    // Invalid or tampered session payloads are removed below.
+  }
+  logout();
+  return null;
+}
+
+export async function saveReceptionistAccount(input: {
+  enabled: boolean;
+  name: string;
+  email: string;
+  password: string;
+  permissions: ReceptionistPermissions;
+}) {
+  const current = getState();
+  const normalizedPassword = input.password.trim();
+  if (normalizedPassword.length < 8) return false;
+  const passwordHash = await sha256(normalizedPassword);
+  if (passwordHash === current.auth.passwordHash) return false;
+  const account: ReceptionistAccount = {
+    enabled: input.enabled,
+    name: input.name.trim(),
+    email: input.email.trim().toLowerCase(),
+    passwordHash,
+    permissions: input.permissions,
+  };
+  if (!(await persistReceptionist(account))) return false;
+  setState((st) => ({ ...st, staff: { ...st.staff, receptionist: account } }));
+  return true;
+}
+
+export async function receptionistLoginIssue(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const receptionist = getState().staff?.receptionist ?? (await loadPersistedReceptionist());
+  if (!receptionist || normalizedEmail !== receptionist.email.toLowerCase()) {
+    return "No receptionist account exists for this email. Ask the administrator to create and save it in Settings.";
+  }
+  if (!receptionist.enabled) {
+    return "This receptionist account is disabled. Ask the administrator to enable it in Settings.";
+  }
+  return "The password is incorrect. Ask the administrator to reset the receptionist password in Settings.";
 }
 
 export async function changePassword(current: string, next: string) {
   const s = getState();
   if ((await sha256(current)) !== s.auth.passwordHash) return false;
   const hash = await sha256(next);
+  if (hash === s.staff?.receptionist?.passwordHash) return false;
   setState((st) => ({ ...st, auth: { ...st.auth, passwordHash: hash } }));
   return true;
 }
@@ -144,7 +412,10 @@ function log(st: GymState, type: ActivityType, title: string, description: strin
 
 function nextInvoice(st: GymState): [GymState, string] {
   const seq = st.invoiceSeq + 1;
-  const used = new Set(st.payments.map((p) => p.invoiceNo));
+  const used = new Set([
+    ...st.payments.map((payment) => payment.invoiceNo),
+    ...st.sales.map((sale) => sale.invoiceNo),
+  ]);
   let n = seq;
   let no = `${st.settings.invoicePrefix}-${String(n).padStart(6, "0")}`;
   while (used.has(no)) {
@@ -154,7 +425,6 @@ function nextInvoice(st: GymState): [GymState, string] {
   return [{ ...st, invoiceSeq: n }, no];
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Members                                                             */
 /* ------------------------------------------------------------------ */
@@ -162,21 +432,30 @@ function nextInvoice(st: GymState): [GymState, string] {
 export type NewMemberInput = Omit<
   Member,
   "id" | "notes" | "measurements" | "deletedAt" | "deletedBy" | "joinDate"
-> & { joinDate?: string; planId?: string; startDate?: string; paidNow?: number; discount?: number };
+> & {
+  joinDate?: string;
+  planId?: string;
+  startDate?: string;
+  paidNow?: number;
+  discount?: number;
+  joiningFee?: number;
+  paymentMethod?: PaymentMethod;
+};
 
 export function addMember(input: NewMemberInput) {
   setState((st) => {
     const id = uid("mem");
     const member: Member = {
       id,
+      type: "member",
       name: input.name,
       email: input.email,
-      phone: input.phone,
+      phone: phoneForCountry(input.phone, st.settings.phoneCountry),
       gender: input.gender,
       dob: input.dob,
       address: input.address,
       photo: input.photo ?? null,
-      emergencyContact: input.emergencyContact,
+      emergencyContact: phoneForCountry(input.emergencyContact, st.settings.phoneCountry),
       joinDate: input.joinDate ?? iso(new Date()),
       notes: [],
       measurements: [],
@@ -184,19 +463,13 @@ export function addMember(input: NewMemberInput) {
       deletedBy: null,
     };
     let next: GymState = { ...st, members: [member, ...st.members] };
-    next = log(
-      next,
-      "member_added",
-      "New member registered",
-      `${member.name} joined the gym`,
-    );
+    next = log(next, "member_added", "New member registered", `${member.name} joined the gym`);
 
     if (input.planId) {
       const plan = next.plans.find((p) => p.id === input.planId);
       if (plan) {
         const start = input.startDate ? new Date(input.startDate) : new Date();
-        const end = new Date(start);
-        end.setDate(end.getDate() + plan.durationDays);
+        const end = membershipEndDate(start, plan);
         const membership: Membership = {
           id: uid("mship"),
           memberId: id,
@@ -205,11 +478,14 @@ export function addMember(input: NewMemberInput) {
           endDate: iso(end),
           price: plan.price,
           discount: Math.min(Math.max(0, Math.round(input.discount ?? 0)), plan.price),
+          joiningFee: Math.max(0, Math.round(input.joiningFee ?? plan.joiningFee ?? 1000)),
           frozen: false,
           createdAt: iso(new Date()),
         };
         next = { ...next, memberships: [membership, ...next.memberships] };
-        if (input.paidNow && input.paidNow > 0) {
+        const payable = membership.price - membership.discount + (membership.joiningFee ?? 0);
+        const paidNow = Math.min(Math.max(0, Math.round(input.paidNow ?? 0)), payable);
+        if (paidNow > 0) {
           const [withSeq, invoiceNo] = nextInvoice(next);
           const payment: Payment = {
             id: uid("pay"),
@@ -217,8 +493,8 @@ export function addMember(input: NewMemberInput) {
             memberId: id,
             membershipId: membership.id,
             kind: "membership",
-            amount: input.paidNow,
-            method: "cash",
+            amount: paidNow,
+            method: input.paymentMethod ?? "cash",
             date: iso(new Date()),
             note: `${plan.name} — joining payment`,
           };
@@ -227,9 +503,14 @@ export function addMember(input: NewMemberInput) {
             next,
             "payment_received",
             "Payment received",
-            `₹${input.paidNow.toLocaleString("en-IN")} from ${member.name}`,
+            `₹${paidNow.toLocaleString("en-IN")} from ${member.name}`,
           );
-          next = log(next, "invoice_generated", "Invoice generated", `${invoiceNo} for ${member.name}`);
+          next = log(
+            next,
+            "invoice_generated",
+            "Invoice generated",
+            `${invoiceNo} for ${member.name}`,
+          );
         }
       }
     }
@@ -238,10 +519,33 @@ export function addMember(input: NewMemberInput) {
 }
 
 export function updateMember(id: string, patch: Partial<Member>) {
-  setState((st) => ({
-    ...st,
-    members: st.members.map((m) => (m.id === id ? { ...m, ...patch } : m)),
-  }));
+  setState((st) => {
+    const current = st.members.find((member) => member.id === id);
+    if (!current) return st;
+    const updated = {
+      ...current,
+      ...patch,
+      phone: patch.phone ? phoneForCountry(patch.phone, st.settings.phoneCountry) : current.phone,
+      emergencyContact: patch.emergencyContact
+        ? phoneForCountry(patch.emergencyContact, st.settings.phoneCountry)
+        : current.emergencyContact,
+    };
+    return {
+      ...st,
+      members: st.members.map((member) => (member.id === id ? updated : member)),
+      sales: st.sales.map((sale) =>
+        sale.memberId === id
+          ? {
+              ...sale,
+              buyer: updated.name,
+              buyerPhone: updated.phone,
+              buyerEmail: updated.email || undefined,
+              buyerAddress: updated.address || undefined,
+            }
+          : sale,
+      ),
+    };
+  });
 }
 
 export function trashMember(id: string, by: string) {
@@ -253,7 +557,12 @@ export function trashMember(id: string, by: string) {
         m.id === id ? { ...m, deletedAt: iso(new Date()), deletedBy: by } : m,
       ),
     };
-    return log(next, "member_trashed", "Member moved to trash", `${member?.name ?? "Member"} moved to trash`);
+    return log(
+      next,
+      "member_trashed",
+      "Member moved to trash",
+      `${member?.name ?? "Member"} moved to trash`,
+    );
   });
 }
 
@@ -262,19 +571,35 @@ export function restoreMember(id: string) {
     const member = st.members.find((m) => m.id === id);
     const next = {
       ...st,
-      members: st.members.map((m) => (m.id === id ? { ...m, deletedAt: null, deletedBy: null } : m)),
+      members: st.members.map((m) =>
+        m.id === id ? { ...m, deletedAt: null, deletedBy: null } : m,
+      ),
     };
-    return log(next, "member_restored", "Member restored", `${member?.name ?? "Member"} restored from trash`);
+    return log(
+      next,
+      "member_restored",
+      "Member restored",
+      `${member?.name ?? "Member"} restored from trash`,
+    );
   });
 }
 
 export function deleteMemberPermanently(id: string) {
   setState((st) => {
     const member = st.members.find((m) => m.id === id);
+    const membershipIds = new Set(st.memberships.filter((m) => m.memberId === id).map((m) => m.id));
+    const saleIds = new Set(st.sales.filter((sale) => sale.memberId === id).map((sale) => sale.id));
     const next: GymState = {
       ...st,
       members: st.members.filter((m) => m.id !== id),
       memberships: st.memberships.filter((m) => m.memberId !== id),
+      payments: st.payments.filter(
+        (payment) =>
+          payment.memberId !== id &&
+          !membershipIds.has(payment.membershipId ?? "") &&
+          !saleIds.has(payment.saleId ?? ""),
+      ),
+      sales: st.sales.filter((sale) => sale.memberId !== id),
     };
     return log(
       next,
@@ -288,16 +613,31 @@ export function deleteMemberPermanently(id: string) {
 function purgeOldTrash() {
   if (!state) return;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const expired = state.members.filter((m) => m.deletedAt && new Date(m.deletedAt).getTime() < cutoff);
+  const expired = state.members.filter(
+    (m) => m.deletedAt && new Date(m.deletedAt).getTime() < cutoff,
+  );
   if (expired.length === 0) {
     purgeOldTrashedPlans();
     return;
   }
   const ids = new Set(expired.map((m) => m.id));
+  const membershipIds = new Set(
+    state.memberships.filter((m) => ids.has(m.memberId)).map((m) => m.id),
+  );
+  const saleIds = new Set(
+    state.sales.filter((sale) => ids.has(sale.memberId ?? "")).map((sale) => sale.id),
+  );
   state = {
     ...state,
     members: state.members.filter((m) => !ids.has(m.id)),
     memberships: state.memberships.filter((m) => !ids.has(m.memberId)),
+    payments: state.payments.filter(
+      (payment) =>
+        !ids.has(payment.memberId ?? "") &&
+        !membershipIds.has(payment.membershipId ?? "") &&
+        !saleIds.has(payment.saleId ?? ""),
+    ),
+    sales: state.sales.filter((sale) => !ids.has(sale.memberId ?? "")),
   };
   purgeOldTrashedPlans();
   persist();
@@ -306,7 +646,11 @@ function purgeOldTrash() {
 function purgeOldTrashedPlans() {
   if (!state) return;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const keep = state.plans.filter((p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff));
+  const referencedPlanIds = new Set(state.memberships.map((membership) => membership.planId));
+  const keep = state.plans.filter(
+    (p) =>
+      referencedPlanIds.has(p.id) || !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
+  );
   const keepProducts = state.products.filter(
     (p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
   );
@@ -322,7 +666,6 @@ function purgeOldTrashedPlans() {
   state = { ...state, plans: keep, products: keepProducts, expenses: keepExpenses };
   persist();
 }
-
 
 export function addNote(memberId: string, title: string, note: string) {
   setState((st) => ({
@@ -385,15 +728,13 @@ export function restorePlan(id: string) {
 }
 
 export function deletePlanPermanently(id: string) {
+  const inUse = getState().memberships.some((membership) => membership.planId === id);
+  if (inUse) return false;
   setState((st) => ({ ...st, plans: st.plans.filter((p) => p.id !== id) }));
+  return true;
 }
 
-export function renewMembership(
-  memberId: string,
-  planId: string,
-  paidNow: number,
-  discount = 0,
-) {
+export function renewMembership(memberId: string, planId: string, paidNow: number, discount = 0) {
   setState((st) => {
     const plan = st.plans.find((p) => p.id === planId);
     const member = st.members.find((m) => m.id === memberId);
@@ -401,9 +742,9 @@ export function renewMembership(
     const current = st.memberships
       .filter((m) => m.memberId === memberId)
       .sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
-    const base = current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date();
-    const end = new Date(base);
-    end.setDate(end.getDate() + plan.durationDays);
+    const base =
+      current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date();
+    const end = membershipEndDate(base, plan);
     const membership: Membership = {
       id: uid("mship"),
       memberId,
@@ -412,9 +753,12 @@ export function renewMembership(
       endDate: iso(end),
       price: plan.price,
       discount: Math.min(Math.max(0, Math.round(discount)), plan.price),
+      joiningFee: 0,
       frozen: false,
       createdAt: iso(new Date()),
     };
+    const payable = membership.price - membership.discount + (membership.joiningFee ?? 0);
+    const collected = Math.min(Math.max(0, Math.round(paidNow)), payable);
     let next: GymState = { ...st, memberships: [membership, ...st.memberships] };
     next = log(
       next,
@@ -422,7 +766,7 @@ export function renewMembership(
       "Membership renewed",
       `${member.name} renewed ${plan.name} · ${plan.durationDays} days`,
     );
-    if (paidNow > 0) {
+    if (collected > 0) {
       const [withSeq, invoiceNo] = nextInvoice(next);
       next = {
         ...withSeq,
@@ -433,7 +777,7 @@ export function renewMembership(
             memberId,
             membershipId: membership.id,
             kind: "membership",
-            amount: paidNow,
+            amount: collected,
             method: "cash",
             date: iso(new Date()),
             note: `${plan.name} — renewal payment`,
@@ -445,7 +789,7 @@ export function renewMembership(
         next,
         "payment_received",
         "Payment received",
-        `₹${paidNow.toLocaleString("en-IN")} from ${member.name}`,
+        `₹${collected.toLocaleString("en-IN")} from ${member.name}`,
       );
     }
     return next;
@@ -455,11 +799,16 @@ export function renewMembership(
 export function toggleFreeze(membershipId: string) {
   setState((st) => ({
     ...st,
-    memberships: st.memberships.map((m) =>
-      m.id === membershipId
-        ? { ...m, frozen: !m.frozen, frozenAt: !m.frozen ? iso(new Date()) : null }
-        : m,
-    ),
+    memberships: st.memberships.map((m) => {
+      if (m.id !== membershipId) return m;
+      const now = new Date();
+      if (!m.frozen) return { ...m, frozen: true, frozenAt: iso(now) };
+
+      const frozenAt = m.frozenAt ? new Date(m.frozenAt) : now;
+      const frozenMs = Math.max(0, now.getTime() - frozenAt.getTime());
+      const extendedEnd = new Date(new Date(m.endDate).getTime() + frozenMs);
+      return { ...m, frozen: false, frozenAt: null, endDate: iso(extendedEnd) };
+    }),
   }));
 }
 
@@ -475,8 +824,25 @@ export function addPayment(input: {
   date?: string;
   note?: string;
 }) {
+  const state = getState();
+  const member = state.members.find((item) => item.id === input.memberId && !item.deletedAt);
+  const membership = input.membershipId
+    ? state.memberships.find(
+        (item) => item.id === input.membershipId && item.memberId === input.memberId,
+      )
+    : undefined;
+  const amount = Math.round(input.amount);
+  if (!member || !membership || !Number.isFinite(amount) || amount <= 0) return false;
+  const alreadyPaid = state.payments
+    .filter((payment) => payment.membershipId === membership.id)
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const remaining = Math.max(
+    0,
+    membership.price - membership.discount + (membership.joiningFee ?? 0) - alreadyPaid,
+  );
+  if (amount > remaining) return false;
+
   setState((st) => {
-    const member = st.members.find((m) => m.id === input.memberId);
     const [withSeq, invoiceNo] = nextInvoice(st);
     const payment: Payment = {
       id: uid("pay"),
@@ -484,7 +850,7 @@ export function addPayment(input: {
       memberId: input.memberId,
       membershipId: input.membershipId ?? null,
       kind: "membership",
-      amount: input.amount,
+      amount,
       method: input.method,
       date: input.date ?? iso(new Date()),
       note: input.note ?? "Manual payment entry",
@@ -494,16 +860,58 @@ export function addPayment(input: {
       next,
       "payment_received",
       "Payment received",
-      `₹${input.amount.toLocaleString("en-IN")} from ${member?.name ?? "member"}`,
+      `₹${amount.toLocaleString("en-IN")} from ${member.name}`,
     );
     next = log(
       next,
       "invoice_generated",
       "Invoice generated",
-      `${invoiceNo} created · ₹${input.amount.toLocaleString("en-IN")}`,
+      `${invoiceNo} created · ₹${amount.toLocaleString("en-IN")}`,
     );
     return next;
   });
+  return true;
+}
+
+export function addSalePayment(
+  saleId: string,
+  amountInput: number,
+  method: Payment["method"],
+  note?: string,
+) {
+  const state = getState();
+  const sale = state.sales.find((item) => item.id === saleId);
+  const amount = Math.round(amountInput);
+  if (!sale || !Number.isFinite(amount) || amount <= 0) return false;
+
+  const alreadyPaid = state.payments
+    .filter((payment) => payment.saleId === sale.id)
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const remaining = Math.max(0, sale.total - alreadyPaid);
+  if (amount > remaining) return false;
+
+  setState((st) => {
+    const payment: Payment = {
+      id: uid("pay"),
+      invoiceNo: sale.invoiceNo,
+      memberId: sale.memberId ?? null,
+      saleId: sale.id,
+      kind: "product",
+      amount,
+      method,
+      date: iso(new Date()),
+      note: note?.trim() || `${sale.productName} — balance payment`,
+    };
+    let next: GymState = { ...st, payments: [payment, ...st.payments] };
+    next = log(
+      next,
+      "payment_received",
+      "Payment received",
+      `₹${amount.toLocaleString("en-IN")} from ${sale.buyer}`,
+    );
+    return next;
+  });
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -515,7 +923,9 @@ export function saveProduct(product: Omit<Product, "id" | "createdAt"> & { id?: 
     if (product.id) {
       return {
         ...st,
-        products: st.products.map((p) => (p.id === product.id ? ({ ...p, ...product } as Product) : p)),
+        products: st.products.map((p) =>
+          p.id === product.id ? ({ ...p, ...product } as Product) : p,
+        ),
       };
     }
     const created: Product = { ...product, id: uid("prd"), createdAt: iso(new Date()) } as Product;
@@ -551,7 +961,9 @@ export function deleteProductPermanently(id: string) {
 export function adjustStock(id: string, delta: number) {
   setState((st) => ({
     ...st,
-    products: st.products.map((p) => (p.id === id ? { ...p, stock: Math.max(0, p.stock + delta) } : p)),
+    products: st.products.map((p) =>
+      p.id === id ? { ...p, stock: Math.max(0, p.stock + delta) } : p,
+    ),
   }));
 }
 
@@ -567,6 +979,7 @@ export function sellProduct(
     buyerAddress?: string;
     /** Amount collected now; defaults to the full payable total. */
     amountPaid?: number;
+    paymentMethod?: PaymentMethod;
   },
 ) {
   setState((st) => {
@@ -576,7 +989,60 @@ export function sellProduct(
     const discount = Math.min(Math.max(0, Math.round(extra?.discount ?? 0)), gross);
     const total = gross - discount;
     const paid = Math.min(Math.max(0, Math.round(extra?.amountPaid ?? total)), total);
-    const [withSeq, invoiceNo] = nextInvoice(st);
+    const buyerPhone = phoneForCountry(extra?.buyerPhone, st.settings.phoneCountry) || undefined;
+    let saleMemberId = memberId ?? null;
+    let saleBuyer = buyer || "Walk-in customer";
+    let saleState = st;
+    if (!saleMemberId) {
+      const phoneKey = normalizedPhone(buyerPhone ?? "");
+      const existing = phoneKey
+        ? st.members.find(
+            (member) =>
+              !member.deletedAt &&
+              member.type === "walk_in" &&
+              normalizedPhone(member.phone) === phoneKey,
+          )
+        : undefined;
+      if (existing) {
+        saleMemberId = existing.id;
+        saleBuyer = existing.name;
+        saleState = {
+          ...st,
+          members: st.members.map((member) =>
+            member.id === existing.id
+              ? {
+                  ...member,
+                  name: buyer.trim() || member.name,
+                  email: extra?.buyerEmail?.trim() || member.email,
+                  address: extra?.buyerAddress?.trim() || member.address,
+                }
+              : member,
+          ),
+        };
+        saleBuyer = buyer.trim() || existing.name;
+      } else {
+        const walkIn: Member = {
+          id: uid("mem"),
+          type: "walk_in",
+          name: saleBuyer,
+          email: extra?.buyerEmail?.trim() ?? "",
+          phone: buyerPhone ?? "",
+          gender: "other",
+          dob: "",
+          address: extra?.buyerAddress?.trim() ?? "",
+          photo: null,
+          joinDate: iso(new Date()),
+          emergencyContact: "",
+          notes: [],
+          measurements: [],
+          deletedAt: null,
+          deletedBy: null,
+        };
+        saleMemberId = walkIn.id;
+        saleState = { ...st, members: [walkIn, ...st.members] };
+      }
+    }
+    const [withSeq, invoiceNo] = nextInvoice(saleState);
     const sale: Sale = {
       id: uid("sale"),
       invoiceNo,
@@ -588,17 +1054,19 @@ export function sellProduct(
       discount,
       total,
       paid,
-      buyer: buyer || "Walk-in customer",
-      buyerPhone: extra?.buyerPhone,
+      buyer: saleBuyer,
+      buyerPhone,
       buyerEmail: extra?.buyerEmail,
       buyerAddress: extra?.buyerAddress,
-      memberId: memberId ?? null,
+      memberId: saleMemberId,
       date: iso(new Date()),
     };
     let next: GymState = {
       ...withSeq,
       sales: [sale, ...withSeq.sales],
-      products: withSeq.products.map((p) => (p.id === productId ? { ...p, stock: p.stock - qty } : p)),
+      products: withSeq.products.map((p) =>
+        p.id === productId ? { ...p, stock: p.stock - qty } : p,
+      ),
       payments:
         paid > 0
           ? [
@@ -606,10 +1074,10 @@ export function sellProduct(
                 id: uid("pay"),
                 invoiceNo,
                 saleId: sale.id,
-                memberId: memberId ?? null,
+                memberId: saleMemberId,
                 kind: "product" as const,
                 amount: paid,
-                method: "cash" as const,
+                method: extra?.paymentMethod ?? "cash",
                 date: sale.date,
                 note: `${product.name} × ${qty}`,
               },
@@ -638,7 +1106,39 @@ export function sellProduct(
 /* ------------------------------------------------------------------ */
 
 export function updateSettings(patch: Partial<Settings>) {
-  setState((st) => ({ ...st, settings: { ...st.settings, ...patch } }));
+  setState((st) => {
+    const phoneCountry = patch.phoneCountry ?? st.settings.phoneCountry ?? "india";
+    const countryChanged = patch.phoneCountry && patch.phoneCountry !== st.settings.phoneCountry;
+    return {
+      ...st,
+      settings: {
+        ...st.settings,
+        ...patch,
+        phone: countryChanged
+          ? phoneForCountry(patch.phone ?? st.settings.phone, phoneCountry)
+          : (patch.phone ?? st.settings.phone),
+      },
+      members: countryChanged
+        ? st.members.map((member) => ({
+            ...member,
+            phone: phoneForCountry(member.phone, phoneCountry),
+            emergencyContact: phoneForCountry(member.emergencyContact, phoneCountry),
+          }))
+        : st.members,
+      sales: countryChanged
+        ? st.sales.map((sale) => ({
+            ...sale,
+            buyerPhone: phoneForCountry(sale.buyerPhone, phoneCountry) || undefined,
+          }))
+        : st.sales,
+      inquiries: countryChanged
+        ? (st.inquiries ?? []).map((inquiry) => ({
+            ...inquiry,
+            phone: phoneForCountry(inquiry.phone, phoneCountry),
+          }))
+        : (st.inquiries ?? []),
+    };
+  });
 }
 
 export function markNotificationsRead(ids: string[]) {
@@ -654,12 +1154,164 @@ export function exportBackup() {
 
 export function restoreBackup(json: string) {
   const parsed = JSON.parse(json) as GymState;
-  if (!parsed || !Array.isArray(parsed.members)) throw new Error("Invalid backup file");
-  setState(() => ({ ...parsed, version: 1 }));
+  const expenses = parsed?.expenses ?? [];
+  const inquiries = parsed?.inquiries ?? [];
+  const arrays = [
+    parsed?.members,
+    parsed?.plans,
+    parsed?.memberships,
+    parsed?.payments,
+    parsed?.products,
+    parsed?.sales,
+    parsed?.activities,
+    expenses,
+    inquiries,
+    parsed?.readNotifications,
+  ];
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !parsed.auth ||
+    !parsed.settings ||
+    !arrays.every(Array.isArray) ||
+    !Number.isFinite(parsed.invoiceSeq)
+  ) {
+    throw new Error("Invalid backup file");
+  }
+
+  const memberIds = new Set(parsed.members.map((member) => member.id));
+  const planIds = new Set(parsed.plans.map((plan) => plan.id));
+  const membershipIds = new Set(parsed.memberships.map((membership) => membership.id));
+  const saleIds = new Set(parsed.sales.map((sale) => sale.id));
+  const valid =
+    parsed.memberships.every(
+      (membership) => memberIds.has(membership.memberId) && planIds.has(membership.planId),
+    ) &&
+    parsed.payments.every(
+      (payment) =>
+        Number.isFinite(payment.amount) &&
+        payment.amount > 0 &&
+        (!payment.memberId || memberIds.has(payment.memberId)) &&
+        (!payment.membershipId || membershipIds.has(payment.membershipId)) &&
+        (!payment.saleId || saleIds.has(payment.saleId)),
+    ) &&
+    parsed.sales.every((sale) => !sale.memberId || memberIds.has(sale.memberId)) &&
+    expenses.every((expense) => Number.isFinite(expense.amount) && expense.amount > 0);
+  if (!valid) throw new Error("Backup contains broken record references");
+
+  setState(() => ({ ...parsed, expenses, inquiries, version: 1 }));
 }
 
 export function resetData() {
-  setState(() => buildSeed());
+  setState((st) => ({
+    ...st,
+    members: [],
+    plans: [],
+    memberships: [],
+    payments: [],
+    products: [],
+    sales: [],
+    activities: [],
+    expenses: [],
+    inquiries: [],
+    readNotifications: [],
+    invoiceSeq: 0,
+  }));
+}
+
+export function setupTemplateData() {
+  setState((st) => {
+    const template = buildSeed();
+    return {
+      ...template,
+      auth: st.auth,
+      settings: st.settings,
+    };
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Inquiries                                                          */
+/* ------------------------------------------------------------------ */
+
+export type InquiryInput = {
+  name: string;
+  phone: string;
+  email?: string;
+  source: InquirySource;
+  interest: string;
+  status: InquiryStatus;
+  priority: InquiryPriority;
+  nextFollowUp?: string | null;
+  notes?: string;
+};
+
+export function addInquiry(input: InquiryInput) {
+  setState((st) => {
+    const now = iso(new Date());
+    const inquiry: Inquiry = {
+      id: uid("inq"),
+      name: input.name.trim(),
+      phone: phoneForCountry(input.phone, st.settings.phoneCountry),
+      email: input.email?.trim() || undefined,
+      source: input.source,
+      interest: input.interest.trim(),
+      status: input.status,
+      priority: input.priority,
+      nextFollowUp: input.nextFollowUp ?? null,
+      notes: input.notes?.trim() ?? "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    return log(
+      { ...st, inquiries: [inquiry, ...(st.inquiries ?? [])] },
+      "inquiry_added",
+      "New inquiry",
+      `${inquiry.name} added as a ${inquiry.priority} lead`,
+    );
+  });
+}
+
+export function updateInquiry(id: string, patch: Partial<InquiryInput>) {
+  setState((st) => {
+    const current = (st.inquiries ?? []).find((inquiry) => inquiry.id === id);
+    if (!current) return st;
+    const updated: Inquiry = {
+      ...current,
+      ...patch,
+      name: patch.name?.trim() ?? current.name,
+      phone:
+        patch.phone === undefined
+          ? current.phone
+          : phoneForCountry(patch.phone, st.settings.phoneCountry),
+      email: patch.email === undefined ? current.email : patch.email.trim() || undefined,
+      interest: patch.interest?.trim() ?? current.interest,
+      notes: patch.notes?.trim() ?? current.notes,
+      updatedAt: iso(new Date()),
+    };
+    return log(
+      {
+        ...st,
+        inquiries: st.inquiries.map((inquiry) => (inquiry.id === id ? updated : inquiry)),
+      },
+      "inquiry_updated",
+      "Inquiry updated",
+      `${updated.name} moved to ${updated.status.replace("_", " ")}`,
+    );
+  });
+}
+
+export function deleteInquiry(id: string) {
+  setState((st) => {
+    const inquiry = (st.inquiries ?? []).find((item) => item.id === id);
+    if (!inquiry) return st;
+    return log(
+      { ...st, inquiries: st.inquiries.filter((item) => item.id !== id) },
+      "inquiry_deleted",
+      "Inquiry deleted",
+      `${inquiry.name} removed from the lead pipeline`,
+    );
+  });
 }
 
 /* ------------------------------------------------------------------ */

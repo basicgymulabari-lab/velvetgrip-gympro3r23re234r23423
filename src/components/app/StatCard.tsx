@@ -36,7 +36,12 @@ export function StatCard({
       className="group surface-panel hairline-top relative block overflow-hidden rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 hover:border-gold/40"
     >
       <div className="flex items-start justify-between gap-3">
-        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-xl border", toneRing[tone])}>
+        <span
+          className={cn(
+            "grid h-11 w-11 shrink-0 place-items-center rounded-xl border",
+            toneRing[tone],
+          )}
+        >
           <Icon className="h-5 w-5" />
         </span>
         <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-gold" />
@@ -56,6 +61,7 @@ export function StatusBadge({ status }: { status: string }) {
     expiring: "bg-warning/12 text-warning border-warning/35",
     expired: "bg-destructive/12 text-destructive border-destructive/35",
     frozen: "bg-info/12 text-info border-info/35",
+    "walk-in": "bg-gold/12 text-gold border-gold/35",
     paid: "bg-success/12 text-success border-success/35",
     partial: "bg-warning/12 text-warning border-warning/35",
     unpaid: "bg-destructive/12 text-destructive border-destructive/35",
