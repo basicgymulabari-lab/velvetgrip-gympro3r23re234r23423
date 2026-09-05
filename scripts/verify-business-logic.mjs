@@ -28,6 +28,7 @@ globalThis.window = {
 
 const vite = await createServer({
   configFile: false,
+  cacheDir: "node_modules/.vite-logic-tests",
   appType: "custom",
   logLevel: "silent",
   server: { middlewareMode: true },
@@ -38,6 +39,17 @@ try {
   const selectors = await vite.ssrLoadModule("/src/lib/gym/selectors.ts");
   const calendar = await vite.ssrLoadModule("/src/lib/gym/calendar.ts");
   const phone = await vite.ssrLoadModule("/src/lib/gym/phone.ts");
+  const { newWorkspace } = await vite.ssrLoadModule("/src/lib/gym/new-workspace.ts");
+  const newOwner = newWorkspace("new-owner@example.com", "New Owner", "New Gym");
+  assert.equal(newOwner.settings.gymName, "New Gym");
+  assert.equal(newOwner.auth.email, "new-owner@example.com");
+  assert.equal(newOwner.auth.passwordHash, "", "cloud owners must not inherit the demo password");
+  for (const key of ["members", "plans", "memberships", "payments", "products", "sales", "expenses", "inquiries", "activities", "readNotifications"]) {
+    assert.deepEqual(newOwner[key], [], `new owner must not inherit ${key}`);
+  }
+  assert.deepEqual(newOwner.staff, {}, "new owners must not inherit another gym's receptionist");
+  newOwner.settings.gymName = "Modified";
+  assert.equal(newWorkspace("second@example.com").settings.gymName, "My Gym", "workspaces must be independent");
 
   const receptionistPassword = "FrontDesk#2026";
   assert.equal(

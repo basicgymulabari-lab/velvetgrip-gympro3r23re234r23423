@@ -3,8 +3,17 @@ import type { GymState } from "./types";
 
 export async function getCloudIdentity() {
   const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) return null;
-  return { id: data.user.id, email: data.user.email ?? "" };
+  if (error) {
+    if (error.name === "AuthSessionMissingError") return null;
+    throw error;
+  }
+  if (!data.user) return null;
+  return {
+    id: data.user.id,
+    email: data.user.email ?? "",
+    name: String(data.user.user_metadata?.full_name ?? "Gym Owner"),
+    gymName: String(data.user.user_metadata?.gym_name ?? "My Gym"),
+  };
 }
 
 export async function loadCloudState(ownerId: string): Promise<GymState | null> {
@@ -37,5 +46,7 @@ export async function signInWithGoogle() {
 }
 
 export async function signOutFromCloud() {
-  return supabase.auth.signOut();
+  const result = await supabase.auth.signOut({ scope: "local" });
+  if (result.error) throw result.error;
+  return result;
 }

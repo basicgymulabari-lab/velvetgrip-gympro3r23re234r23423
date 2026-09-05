@@ -1,9 +1,9 @@
+import { AccountSecurity } from "@/components/app/AccountSecurity";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Database,
   Download,
-  KeyRound,
   Upload,
   RotateCcw,
   Save,
@@ -33,7 +33,6 @@ import type { CalendarSystem, PhoneCountry, ReceptionistPermissions } from "@/li
 import { PHONE_COUNTRIES } from "@/lib/gym/phone";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  changePassword,
   DEFAULT_RECEPTIONIST_PERMISSIONS,
   exportBackup,
   resetData,
@@ -95,11 +94,6 @@ function SettingsPage() {
   const [templateOpen, setTemplateOpen] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [form, setForm] = useState<Record<string, string> | null>(null);
-  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
-  const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordOpen, setPasswordOpen] = useState(false);
-  const [passwordStep, setPasswordStep] = useState<"verify" | "create" | "forgot">("verify");
-  const [passwordError, setPasswordError] = useState("");
   const [receptionistDraft, setReceptionistDraft] = useState<{
     enabled: boolean;
     name: string;
@@ -387,9 +381,7 @@ function SettingsPage() {
             </div>
             <Switch
               checked={receptionistForm.enabled}
-              onCheckedChange={(enabled) =>
-                setReceptionistDraft({ ...receptionistForm, enabled })
-              }
+              onCheckedChange={(enabled) => setReceptionistDraft({ ...receptionistForm, enabled })}
               aria-label="Enable receptionist account"
             />
           </div>
@@ -401,10 +393,10 @@ function SettingsPage() {
                 id="receptionist-name"
                 value={receptionistForm.name}
                 placeholder="Front Desk"
-                onChange={(event) =>
-                  (setReceptionistError(""),
-                  setReceptionistDraft({ ...receptionistForm, name: event.target.value }))
-                }
+                onChange={(event) => (
+                  setReceptionistError(""),
+                  setReceptionistDraft({ ...receptionistForm, name: event.target.value })
+                )}
               />
             </div>
             <div className="space-y-2">
@@ -414,10 +406,10 @@ function SettingsPage() {
                 type="email"
                 value={receptionistForm.email}
                 placeholder="reception@yourgym.com"
-                onChange={(event) =>
-                  (setReceptionistError(""),
-                  setReceptionistDraft({ ...receptionistForm, email: event.target.value }))
-                }
+                onChange={(event) => (
+                  setReceptionistError(""),
+                  setReceptionistDraft({ ...receptionistForm, email: event.target.value })
+                )}
               />
             </div>
             <div className="space-y-2">
@@ -429,10 +421,10 @@ function SettingsPage() {
                 autoComplete="new-password"
                 value={receptionistForm.password}
                 placeholder="At least 8 characters"
-                onChange={(event) =>
-                  (setReceptionistError(""),
-                  setReceptionistDraft({ ...receptionistForm, password: event.target.value }))
-                }
+                onChange={(event) => (
+                  setReceptionistError(""),
+                  setReceptionistDraft({ ...receptionistForm, password: event.target.value })
+                )}
               />
               <p className="text-xs text-muted-foreground">
                 Required every time you save. It must differ from the administrator password.
@@ -447,13 +439,13 @@ function SettingsPage() {
                 autoComplete="new-password"
                 value={receptionistForm.confirmPassword}
                 placeholder="Type the same password again"
-                onChange={(event) =>
-                  (setReceptionistError(""),
+                onChange={(event) => (
+                  setReceptionistError(""),
                   setReceptionistDraft({
                     ...receptionistForm,
                     confirmPassword: event.target.value,
-                  }))
-                }
+                  })
+                )}
               />
             </div>
           </div>
@@ -502,7 +494,9 @@ function SettingsPage() {
                     <span>{label}</span>
                     <span
                       className={`grid h-5 w-5 place-items-center rounded-full border ${
-                        allowed ? "border-success bg-success text-primary-foreground" : "border-border"
+                        allowed
+                          ? "border-success bg-success text-primary-foreground"
+                          : "border-border"
                       }`}
                     >
                       {allowed && <Check className="h-3 w-3" />}
@@ -534,11 +528,15 @@ function SettingsPage() {
                 const normalizedPassword = receptionistForm.password.trim();
                 const confirmedPassword = receptionistForm.confirmPassword.trim();
                 if (normalizedPassword.length < 8)
-                  return setReceptionistError("Receptionist password must be at least 8 characters.");
+                  return setReceptionistError(
+                    "Receptionist password must be at least 8 characters.",
+                  );
                 if (normalizedPassword !== confirmedPassword)
                   return setReceptionistError("Receptionist passwords do not match.");
                 if (email.toLowerCase() === state.auth.email.toLowerCase())
-                  return setReceptionistError("Use an email different from the administrator account.");
+                  return setReceptionistError(
+                    "Use an email different from the administrator account.",
+                  );
                 if ((await sha256(normalizedPassword)) === state.auth.passwordHash)
                   return setReceptionistError(
                     "Receptionist password must be different from the administrator password.",
@@ -568,26 +566,7 @@ function SettingsPage() {
         </Panel>
 
         <Panel title="Admin Security" collapsible>
-          <div className="flex items-start gap-3 rounded-xl border border-border bg-secondary/30 p-4">
-            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-gold" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Change admin password</p>
-              <p className="text-xs text-muted-foreground">
-                Update the password used to access this application on this device.
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPasswords({ current: "", next: "", confirm: "" });
-                setPasswordError("");
-                setPasswordStep("verify");
-                setPasswordOpen(true);
-              }}
-            >
-              Change password
-            </Button>
-          </div>
+          <AccountSecurity />
         </Panel>
 
         <Panel title="Danger Zone" collapsible>
@@ -629,7 +608,9 @@ function SettingsPage() {
             </div>
             <div className="rounded-xl border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground">Login email</p>
-              <p className="mt-1 break-all text-sm font-medium">{state.staff?.receptionist?.email}</p>
+              <p className="mt-1 break-all text-sm font-medium">
+                {state.staff?.receptionist?.email}
+              </p>
             </div>
             <p className="text-xs text-muted-foreground">
               For security, the password is never placed in the copied link. Share it separately.
@@ -643,157 +624,6 @@ function SettingsPage() {
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={passwordOpen} onOpenChange={setPasswordOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="font-display text-2xl tracking-wide">
-              {passwordStep === "forgot"
-                ? "Forgot your password?"
-                : passwordStep === "verify"
-                  ? "Verify current password"
-                  : "Create a new password"}
-            </DialogTitle>
-          </DialogHeader>
-
-          {passwordStep === "forgot" ? (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-gold/30 bg-gold/5 p-4 text-sm text-muted-foreground">
-                This application stores everything only on this device and has no verified email or
-                cloud account. For security, the password cannot be recovered or bypassed from this
-                screen. A secure recovery method must be configured before the password is lost.
-              </div>
-              <p className="text-xs text-muted-foreground">
-                If you still know the current password, return and continue. Keep an exported backup
-                in a safe location before making security changes.
-              </p>
-              <div className="flex justify-end">
-                <Button variant="secondary" onClick={() => setPasswordStep("verify")}>
-                  Back
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <form
-              className="space-y-4"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                setPasswordError("");
-
-                if (passwordStep === "verify") {
-                  if (!passwords.current) return setPasswordError("Enter your current password.");
-                  setChangingPassword(true);
-                  const valid = (await sha256(passwords.current)) === state.auth.passwordHash;
-                  setChangingPassword(false);
-                  if (!valid) return setPasswordError("Current password is incorrect.");
-                  setPasswordStep("create");
-                  return;
-                }
-
-                if (passwords.next.length < 8)
-                  return setPasswordError("New password must be at least 8 characters.");
-                if (passwords.next === passwords.current)
-                  return setPasswordError("Choose a password different from your current one.");
-                if (passwords.next !== passwords.confirm)
-                  return setPasswordError("New passwords do not match.");
-
-                setChangingPassword(true);
-                const changed = await changePassword(passwords.current, passwords.next);
-                setChangingPassword(false);
-                if (!changed) return setPasswordError("Current password could not be verified.");
-
-                setPasswords({ current: "", next: "", confirm: "" });
-                setPasswordOpen(false);
-                toast.success("Admin password changed");
-              }}
-            >
-              {passwordStep === "verify" ? (
-                <div className="space-y-2">
-                  <Label htmlFor="current-password">Current password</Label>
-                  <Input
-                    id="current-password"
-                    type="password"
-                    autoFocus
-                    autoComplete="current-password"
-                    value={passwords.current}
-                    onChange={(event) => {
-                      setPasswordError("");
-                      setPasswords((current) => ({ ...current, current: event.target.value }));
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-gold hover:underline"
-                    onClick={() => {
-                      setPasswordError("");
-                      setPasswordStep("forgot");
-                    }}
-                  >
-                    Forgot password?
-                  </button>
-                </div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="new-password">New password</Label>
-                    <Input
-                      id="new-password"
-                      type="password"
-                      autoFocus
-                      minLength={8}
-                      autoComplete="new-password"
-                      value={passwords.next}
-                      onChange={(event) => {
-                        setPasswordError("");
-                        setPasswords((current) => ({ ...current, next: event.target.value }));
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm new password</Label>
-                    <Input
-                      id="confirm-password"
-                      type="password"
-                      minLength={8}
-                      autoComplete="new-password"
-                      value={passwords.confirm}
-                      onChange={(event) => {
-                        setPasswordError("");
-                        setPasswords((current) => ({ ...current, confirm: event.target.value }));
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {passwordError && (
-                <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {passwordError}
-                </p>
-              )}
-
-              <div className="flex justify-end gap-2">
-                {passwordStep === "create" && (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setPasswordStep("verify")}
-                  >
-                    Back
-                  </Button>
-                )}
-                <Button type="submit" disabled={changingPassword}>
-                  {changingPassword
-                    ? "Checking..."
-                    : passwordStep === "verify"
-                      ? "Next"
-                      : "Change password"}
-                </Button>
-              </div>
-            </form>
-          )}
         </DialogContent>
       </Dialog>
 

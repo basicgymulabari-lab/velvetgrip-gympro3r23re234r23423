@@ -21,7 +21,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { getCurrentSession, logout, useGym } from "@/lib/gym/store";
+import { getCurrentSession, logoutSecurely, useGym, validateCurrentSession } from "@/lib/gym/store";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "./NotificationBell";
 import { GlobalSearch } from "./GlobalSearch";
 
@@ -57,13 +59,46 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [ready, setReady] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT" && getCurrentSession()?.role === "admin") {
+        setSessionChecked(false);
+        void navigate({ to: "/login", replace: true });
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, [navigate]);
+
+  useEffect(() => {
+    let active = true;
+    void validateCurrentSession()
+      .then((valid) => {
+        if (!active) return;
+        if (valid) setSessionChecked(true);
+        else void navigate({ to: "/login", replace: true });
+      })
+      .catch(() => {
+        if (active) {
+          toast.error("Could not verify your account. Please sign in again.");
+          void navigate({ to: "/login", replace: true });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!sessionChecked) return;
+    setReady(false);
     const session = getCurrentSession();
-    const permissionEntry = Object.entries(RECEPTIONIST_ROUTE_PERMISSION).find(
-      ([route]) => (route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(`${route}/`)),
+    const permissionEntry = Object.entries(RECEPTIONIST_ROUTE_PERMISSION).find(([route]) =>
+      route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(`${route}/`),
     );
     const receptionistDenied =
       session?.role === "receptionist" &&
@@ -76,14 +111,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       (OWNER_ONLY_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)) ||
         receptionistDenied)
     ) {
-      const firstAllowed = Object.entries(RECEPTIONIST_ROUTE_PERMISSION).find(
-        ([, permission]) => session.permissions?.[permission],
-      )?.[0] ?? "/login";
+      const firstAllowed =
+        Object.entries(RECEPTIONIST_ROUTE_PERMISSION).find(
+          ([, permission]) => session.permissions?.[permission],
+        )?.[0] ?? "/login";
       navigate({ to: firstAllowed as "/" });
     } else {
       setReady(true);
     }
-  }, [navigate, pathname]);
+  }, [navigate, pathname, sessionChecked]);
 
   useEffect(() => setOpen(false), [pathname]);
 
@@ -107,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (!ready || !state) {
+  if (!sessionChecked || !ready || !state) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex items-center gap-3 text-muted-foreground">
@@ -124,16 +160,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     session.role === "receptionist"
       ? NAV.filter(({ to }) => {
           if (OWNER_ONLY_ROUTES.includes(to)) return false;
-          const permission = RECEPTIONIST_ROUTE_PERMISSION[to as keyof typeof RECEPTIONIST_ROUTE_PERMISSION];
+          const permission =
+            RECEPTIONIST_ROUTE_PERMISSION[to as keyof typeof RECEPTIONIST_ROUTE_PERMISSION];
           return permission ? session.permissions?.[permission] : false;
         })
       : NAV;
 
   return (
     <div className="min-h-screen bg-background">
-      {session.role === "admin" && (
-        <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
-      )}
+      {session.role === "admin" && <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />}
 
       {/* Sidebar */}
       <aside
@@ -203,10 +238,21 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
               <button
                 aria-label="Log out"
+                disabled={signingOut}
                 className="rounded-md p-2 text-muted-foreground transition-colors hover:text-destructive"
-                onClick={() => {
-                  logout();
-                  navigate({ to: "/login" });
+                onClick={async () => {
+                  if (signingOut) return;
+                  setSigningOut(true);
+                  try {
+                    await logoutSecurely();
+                    await navigate({ to: "/login", replace: true });
+                  } catch {
+                    toast.error(
+                      "Could not finish saving or sign out. Check your connection and try again.",
+                    );
+                  } finally {
+                    setSigningOut(false);
+                  }
                 }}
               >
                 <LogOut className="h-4 w-4" />

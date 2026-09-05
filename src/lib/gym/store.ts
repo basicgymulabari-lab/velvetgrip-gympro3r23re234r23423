@@ -24,6 +24,7 @@ import type {
   Settings,
 } from "./types";
 import { getCloudIdentity, loadCloudState, saveCloudState, signOutFromCloud } from "./cloud";
+import { newWorkspace } from "./new-workspace";
 
 const DB_KEY = "ironvault.db.v1";
 const SESSION_KEY = "ironvault.session.v1";
@@ -122,10 +123,11 @@ function persist() {
 
 function scheduleCloudSave(nextState: GymState) {
   if (!cloudOwnerId) return;
+  const ownerId = cloudOwnerId;
   if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
   cloudSaveTimer = setTimeout(() => {
-    if (!cloudOwnerId) return;
-    void saveCloudState(cloudOwnerId, nextState).catch((error) => {
+    if (cloudOwnerId !== ownerId) return;
+    void saveCloudState(ownerId, nextState).catch((error) => {
       console.error("Unable to sync the gym workspace to Supabase", error);
     });
   }, 500);
@@ -251,23 +253,54 @@ export function logout() {
   emit();
 }
 
+// Wait for pending changes and revoke the cloud session before returning to login.
+export async function logoutSecurely() {
+  if (cloudSaveTimer) {
+    clearTimeout(cloudSaveTimer);
+    cloudSaveTimer = null;
+  }
+  if (cloudOwnerId && state) await saveCloudState(cloudOwnerId, state);
+  await signOutFromCloud();
+  cloudOwnerId = null;
+  window.sessionStorage.removeItem(SESSION_KEY);
+  window.localStorage.removeItem(SESSION_KEY);
+  emit();
+}
+
 export async function completeCloudLogin() {
   if (!isBrowser()) return false;
   const identity = await getCloudIdentity();
   if (!identity) return false;
+  if (cloudSaveTimer) {
+    clearTimeout(cloudSaveTimer);
+    // Navigating between pages must not discard a pending edit before reloading.
+    if (cloudOwnerId === identity.id && state) await saveCloudState(identity.id, state);
+  }
+  cloudSaveTimer = null;
+  cloudOwnerId = null;
 
   const cloudState = await loadCloudState(identity.id);
   if (cloudState?.version === 1) {
     state = {
       ...cloudState,
       expenses: cloudState.expenses ?? [],
-      inquiries: cloudState.inquiries ?? buildSeed().inquiries,
+      inquiries: cloudState.inquiries ?? [],
       staff: cloudState.staff ?? {},
     };
     configureCalendarSystem(state.settings.calendarSystem);
     persist();
   } else {
-    await saveCloudState(identity.id, getState());
+    const fresh = newWorkspace(identity.email, identity.name, identity.gymName);
+    // Insert only: a concurrent first login must never overwrite an existing workspace.
+    const { supabase } = await import("../../integrations/supabase/client");
+    const { error } = await supabase
+      .from("gym_workspaces")
+      .insert({ owner_id: identity.id, state: fresh });
+    if (error && error.code !== "23505") throw error;
+    state = error ? await loadCloudState(identity.id) : fresh;
+    if (!state) throw new Error("Workspace could not be created.");
+    configureCalendarSystem(state.settings.calendarSystem);
+    persist();
   }
 
   cloudOwnerId = identity.id;
@@ -286,6 +319,14 @@ export async function completeCloudLogin() {
 
 export function isLoggedIn() {
   return getCurrentSession() !== null;
+}
+
+export async function validateCurrentSession() {
+  const session = getCurrentSession();
+  if (!session) return false;
+  if (session.role === "receptionist") return true;
+  // A browser session marker alone is not proof of an authenticated owner.
+  return completeCloudLogin();
 }
 
 export type CurrentSession = {
