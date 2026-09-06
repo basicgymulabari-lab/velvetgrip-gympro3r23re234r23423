@@ -39,17 +39,50 @@ try {
   const selectors = await vite.ssrLoadModule("/src/lib/gym/selectors.ts");
   const calendar = await vite.ssrLoadModule("/src/lib/gym/calendar.ts");
   const phone = await vite.ssrLoadModule("/src/lib/gym/phone.ts");
+  const { csvText } = await vite.ssrLoadModule("/src/lib/gym/csv.ts");
+  assert.equal(csvText([["=1+1", 'A,"B', 12]]), '\uFEFF"\'=1+1","A,""B","12"');
+  const { anonymizeDemoContacts } = await vite.ssrLoadModule("/src/lib/gym/demo-contacts.ts");
+  const { buildSeed } = await vite.ssrLoadModule("/src/lib/gym/seed.ts");
+  const demoState = buildSeed();
+  assert(
+    demoState.members.every((m) => m.phone === "0000000000" && m.email.endsWith("@example.com")),
+  );
+  const editedDemo = structuredClone(demoState);
+  editedDemo.members[0].phone = "+91 98200 41122";
+  editedDemo.members[0].email = "priya.sharma@mail.com";
+  const sanitizedDemo = anonymizeDemoContacts(editedDemo);
+  assert.equal(sanitizedDemo.members[0].phone, "0000000000");
+  assert.equal(sanitizedDemo.members[0].email, "demo.member1@example.com");
+  editedDemo.members[0].phone = "custom phone";
+  editedDemo.members[0].email = "custom@example.com";
+  assert.equal(anonymizeDemoContacts(editedDemo).members[0].phone, "custom phone");
+  assert.equal(anonymizeDemoContacts(editedDemo).members[0].email, "custom@example.com");
   const { newWorkspace } = await vite.ssrLoadModule("/src/lib/gym/new-workspace.ts");
   const newOwner = newWorkspace("new-owner@example.com", "New Owner", "New Gym");
   assert.equal(newOwner.settings.gymName, "New Gym");
   assert.equal(newOwner.auth.email, "new-owner@example.com");
   assert.equal(newOwner.auth.passwordHash, "", "cloud owners must not inherit the demo password");
-  for (const key of ["members", "plans", "memberships", "payments", "products", "sales", "expenses", "inquiries", "activities", "readNotifications"]) {
+  for (const key of [
+    "members",
+    "plans",
+    "memberships",
+    "payments",
+    "products",
+    "sales",
+    "expenses",
+    "inquiries",
+    "activities",
+    "readNotifications",
+  ]) {
     assert.deepEqual(newOwner[key], [], `new owner must not inherit ${key}`);
   }
   assert.deepEqual(newOwner.staff, {}, "new owners must not inherit another gym's receptionist");
   newOwner.settings.gymName = "Modified";
-  assert.equal(newWorkspace("second@example.com").settings.gymName, "My Gym", "workspaces must be independent");
+  assert.equal(
+    newWorkspace("second@example.com").settings.gymName,
+    "My Gym",
+    "workspaces must be independent",
+  );
 
   const receptionistPassword = "FrontDesk#2026";
   assert.equal(

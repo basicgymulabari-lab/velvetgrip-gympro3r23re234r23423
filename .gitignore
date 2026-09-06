@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-tauri
 .output
 .vinxi
 .tanstack/**
@@ -21,6 +22,7 @@ dist-ssr
 
 # Wrangler / Cloudflare
 .wrangler/
+src-tauri/target/
 .dev.vars
 
 # Local Supabase CLI metadata

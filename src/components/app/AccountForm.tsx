@@ -166,6 +166,10 @@ export function AccountForm() {
         await navigate({ to: "/", replace: true });
         return;
       } else {
+        if (import.meta.env.DEV && (await login(normalized, password))) {
+          await navigate({ to: "/", replace: true });
+          return;
+        }
         const { error } = await supabase.auth.signInWithPassword({ email: normalized, password });
         if (error)
           throw new Error(
@@ -363,6 +367,16 @@ export function AccountForm() {
         >
           {mode === "signin" ? "New here? Sign up" : "Already have an account? Sign in"}
         </button>
+      )}
+      {mode === "signin" && staff && import.meta.env.DEV && (
+        <p className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
+          Local demo: demo@ironvault.gym / DemoAccess#2026
+        </p>
+      )}
+      {mode === "signin" && !staff && import.meta.env.DEV && (
+        <p className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
+          Local owner demo: admin@ironvault.gym / admin123
+        </p>
       )}
       {mode === "reset" && !recoverySession && (
         <Button

@@ -68,7 +68,7 @@ import {
   compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
-import type { GymState, Membership, Payment, Sale } from "@/lib/gym/types";
+import type { GymState, Membership, Payment, PaymentMethod, Sale } from "@/lib/gym/types";
 
 type CollectBalanceTarget =
   { kind: "membership"; membership: Membership } | { kind: "purchase"; sale: Sale };
@@ -825,6 +825,7 @@ export function RenewDialog({
   const [discountType, setDiscountType] = useState<"none" | "percent" | "fixed">("none");
   const [discountValue, setDiscountValue] = useState("");
   const [paid, setPaid] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   if (!state) return null;
   const plan = state.plans.find((p) => p.id === planId);
   const cur = state.settings.currency;
@@ -855,6 +856,7 @@ export function RenewDialog({
     setPaid("");
     setDiscountType("none");
     setDiscountValue("");
+    setPaymentMethod("cash");
   };
 
   return (
@@ -939,6 +941,26 @@ export function RenewDialog({
               </p>
             )}
           </div>
+          <div className="space-y-2">
+            <Label>Payment method</Label>
+            <Select
+              value={paymentMethod}
+              onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}
+              disabled={paidValid && paidNum === 0}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="upi">UPI</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="bank">Bank transfer</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
@@ -951,7 +973,7 @@ export function RenewDialog({
                   toast.error("Enter a valid amount");
                   return;
                 }
-                renewMembership(memberId, planId, amount, discountAmount);
+                renewMembership(memberId, planId, amount, discountAmount, paymentMethod);
                 toast.success("Membership renewed");
                 onOpenChange(false);
                 reset();

@@ -4,6 +4,7 @@ import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { Plus, Search, Printer, Wallet, AlertTriangle, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
+import { downloadCsv } from "@/lib/gym/csv";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
@@ -20,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addPayment, useGym } from "@/lib/gym/store";
+import { addPayment, useGym, getCurrentSession } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
@@ -89,9 +90,15 @@ function PaymentsPage() {
   const history = useMemo(
     () =>
       state
-        ? paymentsWithNames(state).filter(
-            (p) => !q || `${p.who} ${p.invoiceNo} ${p.note}`.toLowerCase().includes(q),
-          )
+        ? paymentsWithNames(state).filter((p) => {
+            const member = memberOf(state, p.memberId);
+            return (
+              !q ||
+              `${p.who} ${p.invoiceNo} ${p.note ?? ""} ${p.method} ${member?.phone ?? ""} ${member?.email ?? ""}`
+                .toLowerCase()
+                .includes(q)
+            );
+          })
         : [],
     [state, q],
   );
@@ -105,7 +112,11 @@ function PaymentsPage() {
         ms: currentMembership(state, m.id),
       }))
       .filter((r) => r.due > 0)
-      .filter((r) => !q || r.member.name.toLowerCase().includes(q))
+      .filter(
+        (r) =>
+          !q ||
+          `${r.member.name} ${r.member.phone} ${r.member.email ?? ""}`.toLowerCase().includes(q),
+      )
       .sort((a, b) => b.due - a.due);
   }, [state, q]);
 
@@ -115,7 +126,8 @@ function PaymentsPage() {
     navigate({ search: (prev: Record<string, unknown>) => ({ ...prev, ...patch }) as never });
 
   const list = tab === "collected" ? history : pending;
-  const paged = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const effectivePage = Math.min(page, Math.max(1, Math.ceil(list.length / PAGE_SIZE)));
+  const paged = list.slice((effectivePage - 1) * PAGE_SIZE, effectivePage * PAGE_SIZE);
 
   return (
     <>
@@ -156,7 +168,7 @@ function PaymentsPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-9"
-              placeholder="Search invoices or member names"
+              placeholder="Search name, invoice, phone or email"
               value={search.q}
               maxLength={60}
               onChange={(e) => setSearch({ q: e.target.value, page: 1 })}
@@ -177,6 +189,46 @@ function PaymentsPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {list.length} matching {tab === "pending" ? "balances" : "payments"}
+          </span>
+          {getCurrentSession()?.role === "admin" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!list.length}
+              onClick={() => {
+                const rows: (string | number)[][] =
+                  tab === "pending"
+                    ? [
+                        ["Customer", "Phone", "Email", `Balance (${cur})`],
+                        ...pending.map((r) => [
+                          r.member.name,
+                          r.member.phone,
+                          r.member.email ?? "",
+                          r.due,
+                        ]),
+                      ]
+                    : [
+                        ["Invoice", "Date", "Customer", "Method", `Amount (${cur})`],
+                        ...history.map((p) => [
+                          p.invoiceNo,
+                          shortDate(p.date),
+                          p.who,
+                          p.method,
+                          p.amount,
+                        ]),
+                      ];
+                downloadCsv(`payments-${tab}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+                toast.success(`Exported ${list.length} matching records`);
+              }}
+            >
+              Export filtered CSV
+            </Button>
+          )}
         </div>
 
         <div className="mt-5 overflow-x-auto">
@@ -325,7 +377,7 @@ function PaymentsPage() {
         </div>
 
         <TablePager
-          page={page}
+          page={effectivePage}
           pageSize={PAGE_SIZE}
           total={list.length}
           onPage={(p) => setSearch({ page: p })}

@@ -25,16 +25,19 @@ import type {
 } from "./types";
 import { getCloudIdentity, loadCloudState, saveCloudState, signOutFromCloud } from "./cloud";
 import { newWorkspace } from "./new-workspace";
+import { anonymizeDemoContacts } from "./demo-contacts";
 
 const DB_KEY = "ironvault.db.v1";
 const SESSION_KEY = "ironvault.session.v1";
 const RECEPTIONIST_KEY = "ironvault.receptionist.v1";
+const CLOUD_SYNC_PENDING_KEY = "ironvault.cloud-sync-pending.v1";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 let state: GymState | null = null;
 const listeners = new Set<() => void>();
 let cloudOwnerId: string | null = null;
 let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let onlineSyncInstalled = false;
 
 const isBrowser = () => typeof window !== "undefined";
 const normalizedPhone = (value: string) => {
@@ -124,13 +127,30 @@ function persist() {
 function scheduleCloudSave(nextState: GymState) {
   if (!cloudOwnerId) return;
   const ownerId = cloudOwnerId;
+  window.localStorage.setItem(CLOUD_SYNC_PENDING_KEY, "true");
   if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
   cloudSaveTimer = setTimeout(() => {
     if (cloudOwnerId !== ownerId) return;
-    void saveCloudState(ownerId, nextState).catch((error) => {
-      console.error("Unable to sync the gym workspace to Supabase", error);
-    });
+    void saveCloudState(ownerId, nextState)
+      .then(() => {
+        if (state === nextState) window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
+      })
+      .catch((error) => {
+        // The local copy remains authoritative while offline. The online event
+        // below retries the newest state instead of losing the edit.
+        console.error("Unable to sync the gym workspace to Supabase", error);
+      });
   }, 500);
+}
+
+function installOnlineSync() {
+  if (onlineSyncInstalled || !isBrowser() || typeof window.addEventListener !== "function") return;
+  onlineSyncInstalled = true;
+  window.addEventListener("online", () => {
+    if (cloudOwnerId && state && window.localStorage.getItem(CLOUD_SYNC_PENDING_KEY)) {
+      scheduleCloudSave(state);
+    }
+  });
 }
 
 function emit() {
@@ -139,6 +159,7 @@ function emit() {
 
 function init() {
   if (state || !isBrowser()) return;
+  installOnlineSync();
   try {
     const raw = window.localStorage.getItem(DB_KEY);
     if (raw) {
@@ -154,6 +175,8 @@ function init() {
           },
         };
         configureCalendarSystem(state.settings.calendarSystem);
+        state = anonymizeDemoContacts(state);
+        persist();
         purgeOldTrash();
         return;
       }
@@ -211,6 +234,24 @@ export async function login(email: string, password: string) {
   const hash = await sha256(password.trim());
   const normalizedEmail = email.trim().toLowerCase();
   let receptionist = s.staff?.receptionist;
+  if (
+    import.meta.env.DEV &&
+    normalizedEmail === "demo@ironvault.gym" &&
+    hash === "b6980133ea06ec01d91af7186a928fd090900442e1527372fb650bd86db245dd"
+  ) {
+    receptionist = {
+      enabled: true,
+      name: "Demo Receptionist",
+      email: normalizedEmail,
+      passwordHash: hash,
+      permissions: DEFAULT_RECEPTIONIST_PERMISSIONS,
+    };
+    setState((current) => ({
+      ...current,
+      staff: { ...current.staff, receptionist },
+    }));
+    s = getState();
+  }
   if (!receptionist || normalizedEmail !== receptionist.email.toLowerCase()) {
     const persisted = await loadPersistedReceptionist();
     if (persisted) {
@@ -259,7 +300,10 @@ export async function logoutSecurely() {
     clearTimeout(cloudSaveTimer);
     cloudSaveTimer = null;
   }
-  if (cloudOwnerId && state) await saveCloudState(cloudOwnerId, state);
+  if (cloudOwnerId && state) {
+    await saveCloudState(cloudOwnerId, state);
+    window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
+  }
   await signOutFromCloud();
   cloudOwnerId = null;
   window.sessionStorage.removeItem(SESSION_KEY);
@@ -279,7 +323,18 @@ export async function completeCloudLogin() {
   cloudSaveTimer = null;
   cloudOwnerId = null;
 
-  const cloudState = await loadCloudState(identity.id);
+  const localSession = getCurrentSession();
+  const hasPendingLocalChanges =
+    localSession?.cloudUserId === identity.id &&
+    window.localStorage.getItem(CLOUD_SYNC_PENDING_KEY) === "true" &&
+    state?.version === 1;
+
+  if (hasPendingLocalChanges && state) {
+    await saveCloudState(identity.id, state);
+    window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
+  }
+
+  const cloudState = hasPendingLocalChanges ? state : await loadCloudState(identity.id);
   if (cloudState?.version === 1) {
     state = {
       ...cloudState,
@@ -304,6 +359,8 @@ export async function completeCloudLogin() {
   }
 
   cloudOwnerId = identity.id;
+  state = anonymizeDemoContacts(getState());
+  persist();
   const session = JSON.stringify({
     at: Date.now(),
     expiresAt: Date.now() + SESSION_TTL_MS,
@@ -325,6 +382,10 @@ export async function validateCurrentSession() {
   const session = getCurrentSession();
   if (!session) return false;
   if (session.role === "receptionist") return true;
+  if (import.meta.env.DEV && session.email === getState().auth.email.toLowerCase()) return true;
+  // A previously verified owner can keep working during a connection outage.
+  // The normal cloud verification resumes as soon as the device is online.
+  if (!window.navigator.onLine && session.cloudUserId) return true;
   // A browser session marker alone is not proof of an authenticated owner.
   return completeCloudLogin();
 }
@@ -333,6 +394,7 @@ export type CurrentSession = {
   email: string;
   role: "admin" | "receptionist";
   name: string;
+  cloudUserId?: string;
   permissions?: ReceptionistPermissions;
 };
 
@@ -378,6 +440,7 @@ export function getCurrentSession(): CurrentSession | null {
         email,
         role,
         name: role === "admin" ? s.settings.adminName : receptionist?.name || "Receptionist",
+        cloudUserId: cloudUserId || undefined,
         permissions:
           role === "receptionist"
             ? { ...DEFAULT_RECEPTIONIST_PERMISSIONS, ...receptionist?.permissions }
@@ -775,7 +838,13 @@ export function deletePlanPermanently(id: string) {
   return true;
 }
 
-export function renewMembership(memberId: string, planId: string, paidNow: number, discount = 0) {
+export function renewMembership(
+  memberId: string,
+  planId: string,
+  paidNow: number,
+  discount = 0,
+  paymentMethod: Payment["method"] = "cash",
+) {
   setState((st) => {
     const plan = st.plans.find((p) => p.id === planId);
     const member = st.members.find((m) => m.id === memberId);
@@ -819,7 +888,7 @@ export function renewMembership(memberId: string, planId: string, paidNow: numbe
             membershipId: membership.id,
             kind: "membership",
             amount: collected,
-            method: "cash",
+            method: paymentMethod,
             date: iso(new Date()),
             note: `${plan.name} — renewal payment`,
           },

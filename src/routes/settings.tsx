@@ -1,4 +1,5 @@
 import { AccountSecurity } from "@/components/app/AccountSecurity";
+import { InvoiceDialog } from "@/components/app/InvoiceDialog";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -88,6 +89,7 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsPage() {
+  const [invoicePreview, setInvoicePreview] = useState(false);
   const state = useGym();
   const fileRef = useRef<HTMLInputElement>(null);
   const [resetOpen, setResetOpen] = useState(false);
@@ -169,7 +171,13 @@ function SettingsPage() {
               />
             </div>
           </div>
-          <div className="mt-5 flex justify-end">
+          <p className="mt-4 text-xs text-muted-foreground">
+            Your saved gym name and contact details appear on all invoices, printed copies and PDFs.
+          </p>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={() => setInvoicePreview(true)}>
+              Preview invoice
+            </Button>
             <Button
               onClick={() => {
                 if (!form) return toast.info("No changes to save");
@@ -588,6 +596,23 @@ function SettingsPage() {
         </Panel>
       </div>
 
+      <InvoiceDialog
+        settings={s}
+        onOpenChange={setInvoicePreview}
+        invoice={
+          invoicePreview
+            ? {
+                invoiceNo: "PREVIEW",
+                date: new Date().toISOString(),
+                billedTo: "Sample customer",
+                lines: [{ description: "Sample membership — preview only", qty: 1, rate: 1000 }],
+                paid: 1000,
+                title: "Invoice preview — saved gym details",
+                method: "Cash",
+              }
+            : null
+        }
+      />
       <Dialog open={receptionistSavedOpen} onOpenChange={setReceptionistSavedOpen}>
         <DialogContent>
           <DialogHeader>

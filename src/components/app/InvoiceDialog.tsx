@@ -35,9 +35,12 @@ export function invoiceStatusOf(total: number, paid: number): InvoiceStatus {
 }
 
 /** Prints the invoice node only — same layout for Print and Save-as-PDF (A4). */
-function printInvoice() {
+function printInvoice(gymName: string, invoiceNo: string) {
   if (typeof document === "undefined") return;
   const node = document.getElementById("invoice-print");
+  if (!node) return;
+  const previousTitle = document.title;
+  document.title = `${gymName.trim()} - ${invoiceNo}`;
   const dialog = node?.closest<HTMLElement>('[role="dialog"]') ?? null;
   const prevStyle = dialog?.getAttribute("style") ?? null;
 
@@ -55,6 +58,7 @@ function printInvoice() {
 
   document.body.classList.add("invoice-printing");
   const cleanup = () => {
+    document.title = previousTitle;
     document.body.classList.remove("invoice-printing");
     if (dialog) {
       if (prevStyle === null) dialog.removeAttribute("style");
@@ -63,8 +67,11 @@ function printInvoice() {
     window.removeEventListener("afterprint", cleanup);
   };
   window.addEventListener("afterprint", cleanup);
-  window.print();
-  window.setTimeout(cleanup, 1500);
+  try {
+    window.print();
+  } finally {
+    cleanup();
+  }
 }
 
 /**
@@ -96,23 +103,32 @@ export function InvoiceDialog({
 
   return (
     <Dialog open={Boolean(invoice)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
         <DialogHeader className="no-print">
           <DialogTitle className="font-display text-2xl tracking-wide">
             {invoice.title ?? "Invoice"} {invoice.invoiceNo}
           </DialogTitle>
         </DialogHeader>
 
-        <div id="invoice-print" className="rounded-xl border border-border bg-card p-6">
+        <div
+          id="invoice-print"
+          className="min-w-0 rounded-xl border border-border bg-card p-3 sm:p-6"
+        >
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
-            <div className="min-w-0">
-              <p className="font-display text-2xl tracking-[0.16em] text-gradient-gold">
+            <div className="min-w-0 flex-1 basis-48">
+              <p className="break-words font-display text-2xl tracking-[0.06em] text-gradient-gold">
                 {settings.gymName}
               </p>
-              <p className="text-xs text-muted-foreground">{settings.tagline}</p>
-              <p className="mt-2 max-w-xs text-xs text-muted-foreground">{settings.address}</p>
-              <p className="text-xs text-muted-foreground">
-                {settings.phone} · {settings.email}
+              {settings.tagline && (
+                <p className="break-words text-xs text-muted-foreground">{settings.tagline}</p>
+              )}
+              {settings.address && (
+                <p className="mt-2 max-w-xs whitespace-pre-line break-words text-xs text-muted-foreground">
+                  {settings.address}
+                </p>
+              )}
+              <p className="break-words text-xs text-muted-foreground">
+                {[settings.phone, settings.email].filter((v) => v?.trim()).join(" · ")}
               </p>
             </div>
             <div className="text-right">
@@ -154,7 +170,7 @@ export function InvoiceDialog({
             <tbody>
               {invoice.lines.map((l, i) => (
                 <tr key={i} className="border-b border-border/60">
-                  <td className="py-2.5">{l.description}</td>
+                  <td className="max-w-48 break-words py-2.5 pr-2">{l.description}</td>
                   <td className="py-2.5 text-center">{l.qty}</td>
                   <td className="py-2.5 text-right">{money(l.rate, settings.currency)}</td>
                   <td className="py-2.5 text-right">{money(l.qty * l.rate, settings.currency)}</td>
@@ -197,14 +213,20 @@ export function InvoiceDialog({
           </p>
         </div>
 
-        <div className="no-print flex justify-end gap-2">
+        <p className="no-print text-xs text-muted-foreground">
+          To save a PDF, choose “Save as PDF” in the print window.
+        </p>
+        <div className="no-print flex flex-wrap justify-end gap-2">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          <Button variant="secondary" onClick={printInvoice}>
-            <Download className="mr-2 h-4 w-4" /> Download PDF
+          <Button
+            variant="secondary"
+            onClick={() => printInvoice(settings.gymName, invoice.invoiceNo)}
+          >
+            <Download className="mr-2 h-4 w-4" /> Save as PDF
           </Button>
-          <Button onClick={printInvoice}>
+          <Button onClick={() => printInvoice(settings.gymName, invoice.invoiceNo)}>
             <Printer className="mr-2 h-4 w-4" /> Print invoice
           </Button>
         </div>
