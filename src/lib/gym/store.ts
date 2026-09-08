@@ -167,7 +167,11 @@ function init() {
       if (parsed && parsed.version === 1) {
         state = {
           ...parsed,
-          expenses: parsed.expenses ?? [],
+          expenses: (parsed.expenses ?? []).map((expense) => ({
+            ...expense,
+            // Legacy local records predate expense locking; protect them by default.
+            locked: expense.locked !== false,
+          })),
           inquiries: parsed.inquiries ?? buildSeed().inquiries,
           staff: {
             ...(parsed.staff ?? {}),
@@ -338,7 +342,10 @@ export async function completeCloudLogin() {
   if (cloudState?.version === 1) {
     state = {
       ...cloudState,
-      expenses: cloudState.expenses ?? [],
+      expenses: (cloudState.expenses ?? []).map((expense) => ({
+        ...expense,
+        locked: expense.locked !== false,
+      })),
       inquiries: cloudState.inquiries ?? [],
       staff: cloudState.staff ?? {},
     };
@@ -404,8 +411,12 @@ export const DEFAULT_RECEPTIONIST_PERMISSIONS: ReceptionistPermissions = {
   memberships: true,
   payments: true,
   products: true,
+  viewProductCost: false,
+  expenses: false,
+  reports: false,
   inquiries: true,
   notifications: true,
+  trash: false,
   viewRevenue: false,
 };
 
@@ -458,19 +469,29 @@ export async function saveReceptionistAccount(input: {
   enabled: boolean;
   name: string;
   email: string;
-  password: string;
+  /** Omit to keep an already-saved receptionist password unchanged. */
+  password?: string;
   permissions: ReceptionistPermissions;
 }) {
   const current = getState();
-  const normalizedPassword = input.password.trim();
-  if (normalizedPassword.length < 8) return false;
-  const passwordHash = await sha256(normalizedPassword);
-  if (passwordHash === current.auth.passwordHash) return false;
+  const currentReceptionist = current.staff?.receptionist;
+  const normalizedPassword = input.password?.trim() ?? "";
+  if (!currentReceptionist && normalizedPassword.length < 8) return false;
+
+  let passwordHash = currentReceptionist?.passwordHash ?? "";
+  if (normalizedPassword) {
+    if (normalizedPassword.length < 8) return false;
+    passwordHash = await sha256(normalizedPassword);
+    if (passwordHash === current.auth.passwordHash) return false;
+  }
+  if (!passwordHash) return false;
+
   const account: ReceptionistAccount = {
     enabled: input.enabled,
     name: input.name.trim(),
     email: input.email.trim().toLowerCase(),
     passwordHash,
+    passwordCopy: normalizedPassword || currentReceptionist?.passwordCopy,
     permissions: input.permissions,
   };
   if (!(await persistReceptionist(account))) return false;
@@ -782,6 +803,33 @@ export function addNote(memberId: string, title: string, note: string) {
   }));
 }
 
+export function updateNote(memberId: string, noteId: string, patch: { title: string; note: string }) {
+  setState((st) => ({
+    ...st,
+    members: st.members.map((m) =>
+      m.id === memberId
+        ? {
+            ...m,
+            notes: m.notes.map((entry) =>
+              entry.id === noteId
+                ? { ...entry, title: patch.title.trim(), note: patch.note.trim() }
+                : entry,
+            ),
+          }
+        : m,
+    ),
+  }));
+}
+
+export function deleteNote(memberId: string, noteId: string) {
+  setState((st) => ({
+    ...st,
+    members: st.members.map((m) =>
+      m.id === memberId ? { ...m, notes: m.notes.filter((entry) => entry.id !== noteId) } : m,
+    ),
+  }));
+}
+
 export function addMeasurement(
   memberId: string,
   data: Omit<Member["measurements"][number], "id" | "date">,
@@ -794,6 +842,37 @@ export function addMeasurement(
             ...m,
             measurements: [{ id: uid("msr"), date: iso(new Date()), ...data }, ...m.measurements],
           }
+        : m,
+    ),
+  }));
+}
+
+export function updateMeasurement(
+  memberId: string,
+  measurementId: string,
+  data: Omit<Member["measurements"][number], "id" | "date">,
+) {
+  setState((st) => ({
+    ...st,
+    members: st.members.map((m) =>
+      m.id === memberId
+        ? {
+            ...m,
+            measurements: m.measurements.map((entry) =>
+              entry.id === measurementId ? { ...entry, ...data } : entry,
+            ),
+          }
+        : m,
+    ),
+  }));
+}
+
+export function deleteMeasurement(memberId: string, measurementId: string) {
+  setState((st) => ({
+    ...st,
+    members: st.members.map((m) =>
+      m.id === memberId
+        ? { ...m, measurements: m.measurements.filter((entry) => entry.id !== measurementId) }
         : m,
     ),
   }));
@@ -1436,6 +1515,7 @@ export type ExpenseInput = {
   method: Expense["method"];
   notes?: string;
   attachment?: Expense["attachment"];
+  locked?: boolean;
 };
 
 function nextExpenseNo(list: Expense[]) {
@@ -1460,6 +1540,8 @@ export function addExpense(input: ExpenseInput) {
       notes: input.notes?.trim() ?? "",
       attachment: input.attachment ?? null,
       createdAt: iso(new Date()),
+      // Every newly-created expense starts protected from deletion.
+      locked: true,
       deletedAt: null,
     };
     const next: GymState = { ...st, expenses: [expense, ...list] };
@@ -1500,6 +1582,8 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
 }
 
 export function trashExpense(id: string) {
+  const existing = (getState().expenses ?? []).find((expense) => expense.id === id);
+  if (!existing || existing.locked !== false) return false;
   setState((st) => {
     const target = (st.expenses ?? []).find((e) => e.id === id);
     const next: GymState = {
@@ -1515,6 +1599,7 @@ export function trashExpense(id: string) {
       `${target?.title ?? "Expense"} moved to trash`,
     );
   });
+  return true;
 }
 
 export function restoreExpense(id: string) {
@@ -1525,5 +1610,8 @@ export function restoreExpense(id: string) {
 }
 
 export function deleteExpensePermanently(id: string) {
+  const existing = (getState().expenses ?? []).find((expense) => expense.id === id);
+  if (!existing || existing.locked !== false) return false;
   setState((st) => ({ ...st, expenses: (st.expenses ?? []).filter((e) => e.id !== id) }));
+  return true;
 }

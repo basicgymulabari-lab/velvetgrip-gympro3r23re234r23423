@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { completeCloudLogin, login, getState } from "@/lib/gym/store";
 import { signInWithGoogle } from "@/lib/gym/cloud";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 
 type Mode = "signin" | "signup" | "forgot" | "reset";
 export function AccountForm() {
+  const cloudAuthAvailable = isSupabaseConfigured();
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("signin");
   const [staff, setStaff] = useState(false);
@@ -39,6 +40,14 @@ export function AccountForm() {
     if (fragment.has("error")) {
       setError("This link is invalid or expired. Please request a new link.");
       window.history.replaceState(null, "", window.location.pathname);
+    }
+    if (!cloudAuthAvailable) {
+      // Local clones do not contain Supabase credentials. The development
+      // owner/receptionist login below still works without cloud auth.
+      setChecking(false);
+      return () => {
+        active = false;
+      };
     }
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") {
@@ -72,7 +81,7 @@ export function AccountForm() {
       active = false;
       listener.subscription.unsubscribe();
     };
-  }, [navigate]);
+  }, [cloudAuthAvailable, navigate]);
   function switchMode(next: Mode) {
     setMode(next);
     setPassword("");
@@ -107,6 +116,10 @@ export function AccountForm() {
           );
           return;
         }
+        if (!cloudAuthAvailable)
+          throw new Error(
+            "Cloud account recovery is not configured for this local build. Use the local demo owner account instead.",
+          );
         const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
           redirectTo: `${window.location.origin}/login`,
         });
@@ -121,6 +134,8 @@ export function AccountForm() {
         if (password !== confirm) throw new Error("The passwords do not match.");
       }
       if (mode === "reset") {
+        if (!cloudAuthAvailable)
+          throw new Error("Cloud password reset is not configured for this local build.");
         if (!recoverySession)
           throw new Error("Request a new reset link before changing your password.");
         const { error } = await supabase.auth.updateUser({ password });
@@ -137,6 +152,10 @@ export function AccountForm() {
         return;
       }
       if (mode === "signup") {
+        if (!cloudAuthAvailable)
+          throw new Error(
+            "Cloud sign-up is not configured for this local build. Use the local demo owner account instead.",
+          );
         if (!name.trim() || !gym.trim()) throw new Error("Enter your name and gym name.");
         const { data, error } = await supabase.auth.signUp({
           email: normalized,
@@ -170,6 +189,10 @@ export function AccountForm() {
           await navigate({ to: "/", replace: true });
           return;
         }
+        if (!cloudAuthAvailable)
+          throw new Error(
+            "Cloud sign-in is not configured for this local build. Use admin@ironvault.gym / admin123.",
+          );
         const { error } = await supabase.auth.signInWithPassword({ email: normalized, password });
         if (error)
           throw new Error(
@@ -239,7 +262,7 @@ export function AccountForm() {
           ))}
         </div>
       )}
-      {!staff && (mode === "signin" || mode === "signup") && (
+      {!staff && cloudAuthAvailable && (mode === "signin" || mode === "signup") && (
         <>
           <Button
             type="button"

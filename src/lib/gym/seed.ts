@@ -522,6 +522,7 @@ export function buildSeed(): GymState {
     notes: "Starter record for offline reporting and cash-flow analysis.",
     attachment: null,
     createdAt: iso(addDays(now, -daysAgo)),
+    locked: true,
     deletedAt: null,
   }));
 

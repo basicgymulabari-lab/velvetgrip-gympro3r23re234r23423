@@ -60,8 +60,12 @@ const RECEPTIONIST_PERMISSION_OPTIONS: Array<{
   { key: "memberships", label: "Memberships" },
   { key: "payments", label: "Payments" },
   { key: "products", label: "Products" },
+  { key: "viewProductCost", label: "View product cost & profit" },
+  { key: "expenses", label: "Expenses & finance" },
+  { key: "reports", label: "Reports" },
   { key: "inquiries", label: "Inquiries" },
   { key: "notifications", label: "Notifications" },
+  { key: "trash", label: "Trash" },
   { key: "viewRevenue", label: "View revenue figures" },
 ];
 
@@ -107,6 +111,11 @@ function SettingsPage() {
   const [savingReceptionist, setSavingReceptionist] = useState(false);
   const [receptionistSavedOpen, setReceptionistSavedOpen] = useState(false);
   const [receptionistError, setReceptionistError] = useState("");
+  const [changingReceptionistPassword, setChangingReceptionistPassword] = useState(false);
+  const [savedReceptionistCredentials, setSavedReceptionistCredentials] = useState<{
+    email: string;
+    password: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!state) return;
@@ -420,42 +429,88 @@ function SettingsPage() {
                 )}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="receptionist-password">Receptionist password</Label>
-              <Input
-                id="receptionist-password"
-                type="password"
-                minLength={8}
-                autoComplete="new-password"
-                value={receptionistForm.password}
-                placeholder="At least 8 characters"
-                onChange={(event) => (
-                  setReceptionistError(""),
-                  setReceptionistDraft({ ...receptionistForm, password: event.target.value })
-                )}
-              />
-              <p className="text-xs text-muted-foreground">
-                Required every time you save. It must differ from the administrator password.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="receptionist-confirm-password">Confirm password</Label>
-              <Input
-                id="receptionist-confirm-password"
-                type="password"
-                minLength={8}
-                autoComplete="new-password"
-                value={receptionistForm.confirmPassword}
-                placeholder="Type the same password again"
-                onChange={(event) => (
-                  setReceptionistError(""),
-                  setReceptionistDraft({
-                    ...receptionistForm,
-                    confirmPassword: event.target.value,
-                  })
-                )}
-              />
-            </div>
+            {!receptionist || changingReceptionistPassword ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="receptionist-password">
+                    {receptionist ? "New receptionist password" : "Receptionist password"}
+                  </Label>
+                  <Input
+                    id="receptionist-password"
+                    type="password"
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={receptionistForm.password}
+                    placeholder="At least 8 characters"
+                    onChange={(event) => (
+                      setReceptionistError(""),
+                      setReceptionistDraft({ ...receptionistForm, password: event.target.value })
+                    )}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    It must differ from the administrator password.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="receptionist-confirm-password">Confirm password</Label>
+                  <Input
+                    id="receptionist-confirm-password"
+                    type="password"
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={receptionistForm.confirmPassword}
+                    placeholder="Type the same password again"
+                    onChange={(event) => (
+                      setReceptionistError(""),
+                      setReceptionistDraft({
+                        ...receptionistForm,
+                        confirmPassword: event.target.value,
+                      })
+                    )}
+                  />
+                  {receptionist && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="px-0 text-muted-foreground"
+                      onClick={() => {
+                        setReceptionistDraft({
+                          ...receptionistForm,
+                          password: "",
+                          confirmPassword: "",
+                        });
+                        setChangingReceptionistPassword(false);
+                        setReceptionistError("");
+                      }}
+                    >
+                      Cancel password change
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="sm:col-span-2 flex flex-col gap-3 rounded-xl border border-success/30 bg-success/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+                  <div>
+                    <p className="text-sm font-medium text-success">Receptionist password saved</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The saved password remains active after refreshing this page. You do not need
+                      to enter it again when changing permissions.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setChangingReceptionistPassword(true)}
+                >
+                  Change password
+                </Button>
+              </div>
+            )}
           </div>
 
           {receptionistError && (
@@ -464,16 +519,45 @@ function SettingsPage() {
             </p>
           )}
 
-          {receptionist && !receptionistError && (
-            <p className="mt-4 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-              Receptionist password is securely saved. Password fields are intentionally cleared
-              after saving and the password cannot be displayed.
-            </p>
-          )}
-
           <div className="mt-4 rounded-xl border border-success/25 bg-success/5 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-success">
-              <ShieldCheck className="h-4 w-4" /> Receptionist permissions
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-success">
+                <ShieldCheck className="h-4 w-4" /> Receptionist permissions
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    setReceptionistDraft({
+                      ...receptionistForm,
+                      permissions: RECEPTIONIST_PERMISSION_OPTIONS.reduce(
+                        (all, option) => ({ ...all, [option.key]: true }),
+                        { ...receptionistForm.permissions },
+                      ),
+                    })
+                  }
+                >
+                  Grant all access
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    setReceptionistDraft({
+                      ...receptionistForm,
+                      permissions: RECEPTIONIST_PERMISSION_OPTIONS.reduce(
+                        (all, option) => ({ ...all, [option.key]: false }),
+                        { ...receptionistForm.permissions },
+                      ),
+                    })
+                  }
+                >
+                  Clear all
+                </Button>
+              </div>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {RECEPTIONIST_PERMISSION_OPTIONS.map(({ key, label }) => {
@@ -514,7 +598,9 @@ function SettingsPage() {
               })}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Expenses, Reports, Trash and Settings remain owner-only and are hidden from this role.
+              The owner controls every permission above. Settings, Staff Access, administrator
+              security and data-reset controls remain owner-only so the receptionist cannot grant
+              permissions to themselves.
             </p>
           </div>
 
@@ -535,17 +621,19 @@ function SettingsPage() {
                   return setReceptionistError("Enter a valid login email.");
                 const normalizedPassword = receptionistForm.password.trim();
                 const confirmedPassword = receptionistForm.confirmPassword.trim();
-                if (normalizedPassword.length < 8)
-                  return setReceptionistError(
-                    "Receptionist password must be at least 8 characters.",
-                  );
-                if (normalizedPassword !== confirmedPassword)
+                const replacingPassword = !receptionist || changingReceptionistPassword;
+                if (replacingPassword && normalizedPassword.length < 8)
+                  return setReceptionistError("Receptionist password must be at least 8 characters.");
+                if (replacingPassword && normalizedPassword !== confirmedPassword)
                   return setReceptionistError("Receptionist passwords do not match.");
                 if (email.toLowerCase() === state.auth.email.toLowerCase())
                   return setReceptionistError(
                     "Use an email different from the administrator account.",
                   );
-                if ((await sha256(normalizedPassword)) === state.auth.passwordHash)
+                if (
+                  replacingPassword &&
+                  (await sha256(normalizedPassword)) === state.auth.passwordHash
+                )
                   return setReceptionistError(
                     "Receptionist password must be different from the administrator password.",
                   );
@@ -555,7 +643,7 @@ function SettingsPage() {
                   enabled: receptionistForm.enabled,
                   name,
                   email,
-                  password: normalizedPassword,
+                  password: replacingPassword ? normalizedPassword : undefined,
                   permissions: receptionistForm.permissions,
                 });
                 setSavingReceptionist(false);
@@ -563,7 +651,15 @@ function SettingsPage() {
                   return setReceptionistError(
                     "Could not save the receptionist account to browser storage. Free some browser storage and try again.",
                   );
+                setSavedReceptionistCredentials({
+                  email,
+                  password:
+                    replacingPassword
+                      ? normalizedPassword
+                      : receptionist?.passwordCopy ?? null,
+                });
                 setReceptionistDraft(null);
+                setChangingReceptionistPassword(false);
                 setReceptionistSavedOpen(true);
               }}
             >
@@ -632,13 +728,75 @@ function SettingsPage() {
               </div>
             </div>
             <div className="rounded-xl border border-border bg-secondary/30 p-3">
-              <p className="text-xs text-muted-foreground">Login email</p>
-              <p className="mt-1 break-all text-sm font-medium">
-                {state.staff?.receptionist?.email}
-              </p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">Login email</p>
+                  <p className="mt-1 break-all text-sm font-medium">
+                    {savedReceptionistCredentials?.email ?? state.staff?.receptionist?.email}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  aria-label="Copy receptionist email"
+                  title="Copy email"
+                  onClick={async () => {
+                    const email =
+                      savedReceptionistCredentials?.email ?? state.staff?.receptionist?.email ?? "";
+                    if (!email) return;
+                    try {
+                      await navigator.clipboard.writeText(email);
+                      toast.success("Receptionist email copied");
+                    } catch {
+                      toast.error("Could not copy the email");
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/30 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">Login password</p>
+                  <p className="mt-1 break-all text-sm font-medium">
+                    {savedReceptionistCredentials?.password ?? "Password unavailable — change it once to enable copying"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  disabled={!savedReceptionistCredentials?.password}
+                  aria-label="Copy receptionist password"
+                  title={
+                    savedReceptionistCredentials?.password
+                      ? "Copy password"
+                      : "Change the receptionist password once to make it available for copying"
+                  }
+                  onClick={async () => {
+                    const password = savedReceptionistCredentials?.password;
+                    if (!password) return;
+                    try {
+                      await navigator.clipboard.writeText(password);
+                      toast.success("Receptionist password copied");
+                    } catch {
+                      toast.error("Could not copy the password");
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              For security, the password is never placed in the copied link. Share it separately.
+              The saved receptionist password can be copied here by the owner. Older receptionist
+              accounts created before this feature need one password change before the current
+              password becomes available here. It is never placed in the copied login link.
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="secondary" onClick={() => setReceptionistSavedOpen(false)}>

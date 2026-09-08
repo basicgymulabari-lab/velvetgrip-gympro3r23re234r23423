@@ -2,6 +2,24 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+function readSupabaseConfig() {
+  const serverEnv = typeof process !== "undefined" ? process.env : undefined;
+  const url = import.meta.env["VITE_SUPABASE_URL"] || serverEnv?.["SUPABASE_URL"];
+  const publishableKey =
+    import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] || serverEnv?.["SUPABASE_PUBLISHABLE_KEY"];
+  return { url, publishableKey };
+}
+
+/**
+ * Local development can run entirely from the browser workspace without
+ * Supabase. Keep cloud auth optional instead of crashing the whole app when
+ * a cloned repository does not include private/local environment values.
+ */
+export function isSupabaseConfigured() {
+  const { url, publishableKey } = readSupabaseConfig();
+  return Boolean(url && publishableKey);
+}
+
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
 }
@@ -31,10 +49,8 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env["VITE_SUPABASE_URL"] || process.env["SUPABASE_URL"];
-  const SUPABASE_PUBLISHABLE_KEY =
-    import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] || process.env["SUPABASE_PUBLISHABLE_KEY"];
+  // and process.env for SSR.
+  const { url: SUPABASE_URL, publishableKey: SUPABASE_PUBLISHABLE_KEY } = readSupabaseConfig();
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [

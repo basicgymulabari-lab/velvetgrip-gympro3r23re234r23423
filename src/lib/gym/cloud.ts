@@ -1,7 +1,8 @@
-import { supabase } from "../../integrations/supabase/client";
+import { isSupabaseConfigured, supabase } from "../../integrations/supabase/client";
 import type { GymState } from "./types";
 
 export async function getCloudIdentity() {
+  if (!isSupabaseConfigured()) return null;
   const { data, error } = await supabase.auth.getUser();
   if (error) {
     if (error.name === "AuthSessionMissingError") return null;
@@ -46,6 +47,7 @@ export async function signInWithGoogle() {
 }
 
 export async function signOutFromCloud() {
+  if (!isSupabaseConfigured()) return { error: null };
   const result = await supabase.auth.signOut({ scope: "local" });
   if (result.error) throw result.error;
   return result;

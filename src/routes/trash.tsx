@@ -357,8 +357,11 @@ function TrashPage() {
                             variant="ghost"
                             className="text-destructive hover:text-destructive"
                             onClick={() => {
-                              deleteExpensePermanently(e.id);
-                              toast.success("Expense permanently deleted");
+                              if (deleteExpensePermanently(e.id)) {
+                                toast.success("Expense permanently deleted");
+                              } else {
+                                toast.error("This expense is locked and cannot be permanently deleted.");
+                              }
                             }}
                           >
                             <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete forever

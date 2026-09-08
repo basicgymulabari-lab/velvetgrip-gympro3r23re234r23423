@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { getCurrentSession, logoutSecurely, useGym, validateCurrentSession } from "@/lib/gym/store";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "./NotificationBell";
 import { GlobalSearch } from "./GlobalSearch";
 
@@ -42,15 +42,20 @@ const NAV = [
 ] as const;
 
 const SIDEBAR_COLLAPSED_KEY = "ironvault.sidebar.collapsed";
-const OWNER_ONLY_ROUTES = ["/expenses", "/reports", "/trash", "/settings"];
+// Staff Access and account security live inside Settings, so Settings remains owner-only.
+// Every operational area can be delegated individually by the owner.
+const OWNER_ONLY_ROUTES = ["/settings"];
 const RECEPTIONIST_ROUTE_PERMISSION = {
   "/": "dashboard",
   "/members": "members",
   "/memberships": "memberships",
   "/payments": "payments",
   "/products": "products",
+  "/expenses": "expenses",
+  "/reports": "reports",
   "/inquiries": "inquiries",
   "/notifications": "notifications",
+  "/trash": "trash",
 } as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -65,6 +70,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   useEffect(() => {
+    // A fresh local clone intentionally has no Supabase .env values. In that
+    // case the app uses its existing local demo/session flow instead of
+    // mounting cloud auth and throwing from the Supabase client.
+    if (!isSupabaseConfigured()) return;
     const { data } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT" && getCurrentSession()?.role === "admin") {
         setSessionChecked(false);

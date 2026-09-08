@@ -28,7 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addSalePayment, trashProduct, saveProduct, sellProduct, useGym } from "@/lib/gym/store";
+import {
+  addSalePayment,
+  getCurrentSession,
+  trashProduct,
+  saveProduct,
+  sellProduct,
+  useGym,
+} from "@/lib/gym/store";
 import {
   activeMembers,
   isWalkIn,
@@ -142,6 +149,9 @@ function ProductsPage() {
   }, [state, q, categoryFilter]);
 
   if (!state) return null;
+  const session = getCurrentSession();
+  const canViewProductCost =
+    session?.role !== "receptionist" || Boolean(session.permissions?.viewProductCost);
   const cur = state.settings.currency;
   const low = lowStock(state);
   const live = liveProducts(state);
@@ -181,9 +191,13 @@ function ProductsPage() {
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           ["Products", String(live.length), Boxes],
-          ["Stock value", money(stockValue, cur), Boxes],
+          ...(canViewProductCost
+            ? ([
+                ["Stock value", money(stockValue, cur), Boxes],
+                ["Sales profit", money(profitOfSales(state), cur), ShoppingCart],
+              ] as const)
+            : []),
           ["Low stock", String(low.length), PackageX],
-          ["Sales profit", money(profitOfSales(state), cur), ShoppingCart],
         ].map(([label, value, Icon]) => {
           const I = Icon as typeof Boxes;
           return (
@@ -254,7 +268,7 @@ function ProductsPage() {
                 <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                   <th className="py-3">Product</th>
                   <th className="py-3">Category</th>
-                  <th className="py-3">Cost</th>
+                  {canViewProductCost && <th className="py-3">Cost</th>}
                   <th className="py-3">Price</th>
                   <th className="py-3">Stock</th>
                   <th className="py-3 text-right">Actions</th>
@@ -270,7 +284,9 @@ function ProductsPage() {
                       </span>
                     </td>
                     <td className="py-3 text-muted-foreground">{p.category}</td>
-                    <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
+                    {canViewProductCost && (
+                      <td className="py-3 text-muted-foreground">{money(p.cost, cur)}</td>
+                    )}
                     <td className="py-3 text-gold">{money(p.price, cur)}</td>
                     <td className="py-3">
                       <span
@@ -432,7 +448,12 @@ function ProductsPage() {
         onOpenChange={() => setInvoice(null)}
       />
 
-      <ProductDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
+      <ProductDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        product={editing}
+        canViewProductCost={canViewProductCost}
+      />
       <SellDialog
         product={sellFor}
         onClose={() => {
@@ -724,10 +745,12 @@ function ProductDialog({
   open,
   onOpenChange,
   product,
+  canViewProductCost,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   product: Product | null;
+  canViewProductCost: boolean;
 }) {
   const [form, setForm] = useState({
     name: "",
@@ -800,15 +823,17 @@ function ProductDialog({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>Cost price</Label>
-              <Input
-                type="number"
-                min={0}
-                value={form.cost}
-                onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
-              />
-            </div>
+            {canViewProductCost && (
+              <div className="space-y-2">
+                <Label>Cost price</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.cost}
+                  onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Selling price</Label>
               <Input

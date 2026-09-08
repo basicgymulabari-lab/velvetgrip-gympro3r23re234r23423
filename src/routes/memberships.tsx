@@ -5,7 +5,6 @@ import {
   RefreshCw,
   Snowflake,
   Trash2,
-  BellRing,
   Pencil,
   Lock,
   ChevronDown,
@@ -289,17 +288,6 @@ function MembershipsPage() {
                                   }}
                                 >
                                   <Snowflake className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-gold"
-                                  aria-label="Send reminder"
-                                  onClick={() =>
-                                    toast.success(`Renewal reminder logged for ${member.name}`)
-                                  }
-                                >
-                                  <BellRing className="h-4 w-4" />
                                 </Button>
                                 <Button
                                   size="sm"

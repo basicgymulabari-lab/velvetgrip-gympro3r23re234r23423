@@ -16,6 +16,8 @@ import {
   Crop,
   Eye,
   FileText,
+  Lock,
+  LockOpen,
   Paperclip,
   Pencil,
   Plus,
@@ -34,6 +36,7 @@ import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
@@ -449,7 +452,16 @@ function ExpensesPage() {
               <tbody>
                 {paged.map((e) => (
                   <tr key={e.id} className="border-b border-border/50 hover:bg-secondary/40">
-                    <td className="py-3 font-medium text-gold">{e.expenseNo}</td>
+                    <td className="py-3 font-medium text-gold">
+                      <span className="inline-flex items-center gap-1.5">
+                        {e.expenseNo}
+                        {e.locked !== false ? (
+                          <Lock className="h-3.5 w-3.5 text-muted-foreground" aria-label="Locked" />
+                        ) : (
+                          <LockOpen className="h-3.5 w-3.5 text-warning" aria-label="Unlocked" />
+                        )}
+                      </span>
+                    </td>
                     <td className="py-3">
                       <p className="font-medium">{e.title}</p>
                       {e.notes && <p className="text-xs text-muted-foreground">{e.notes}</p>}
@@ -487,9 +499,28 @@ function ExpensesPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          aria-label="Delete expense"
-                          onClick={() => setConfirm(e)}
+                          className={`h-8 w-8 ${
+                            e.locked !== false
+                              ? "cursor-not-allowed text-muted-foreground/40"
+                              : "text-destructive hover:text-destructive"
+                          }`}
+                          aria-label={
+                            e.locked !== false
+                              ? "Expense locked. Edit and unlock before deleting"
+                              : "Delete expense"
+                          }
+                          title={
+                            e.locked !== false
+                              ? "Locked — open Edit Expense and unlock it before deleting"
+                              : "Move expense to Trash"
+                          }
+                          onClick={() => {
+                            if (e.locked !== false) {
+                              toast.info("This expense is locked. Open the pencil icon and unlock it first.");
+                              return;
+                            }
+                            setConfirm(e);
+                          }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -532,8 +563,8 @@ function ExpensesPage() {
             <Button
               onClick={() => {
                 if (confirm) {
-                  trashExpense(confirm.id);
-                  toast.success("Expense moved to Trash");
+                  if (trashExpense(confirm.id)) toast.success("Expense moved to Trash");
+                  else toast.error("This expense is locked. Unlock it from Edit Expense first.");
                 }
                 setConfirm(null);
               }}
@@ -634,6 +665,7 @@ function ExpenseFormDialog({
   const [date, setDate] = useState(expense ? expense.date.slice(0, 10) : todayInput());
   const [method, setMethod] = useState<PaymentMethod>(expense?.method ?? "cash");
   const [notes, setNotes] = useState(expense?.notes ?? "");
+  const [locked, setLocked] = useState(expense ? expense.locked !== false : true);
   const [attachment, setAttachment] = useState<ExpenseAttachment | null>(
     expense?.attachment ?? null,
   );
@@ -654,6 +686,7 @@ function ExpenseFormDialog({
     setDate(expense ? expense.date.slice(0, 10) : todayInput());
     setMethod(expense?.method ?? "cash");
     setNotes(expense?.notes ?? "");
+    setLocked(expense ? expense.locked !== false : true);
     setAttachment(expense?.attachment ?? null);
   }
 
@@ -706,6 +739,7 @@ function ExpenseFormDialog({
       method,
       notes,
       attachment,
+      ...(expense ? { locked } : {}),
     };
     try {
       if (expense) {
@@ -730,6 +764,39 @@ function ExpenseFormDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          <div
+            className={`flex items-center justify-between gap-4 rounded-xl border p-4 ${
+              locked ? "border-border bg-secondary/30" : "border-warning/40 bg-warning/10"
+            }`}
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              {locked ? (
+                <Lock className="mt-0.5 h-5 w-5 shrink-0 text-gold" />
+              ) : (
+                <LockOpen className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+              )}
+              <div>
+                <p className="text-sm font-medium">
+                  {expense ? (locked ? "Expense locked" : "Expense unlocked") : "Expense will be locked"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {expense
+                    ? locked
+                      ? "Deletion is blocked. Turn this off and save changes before moving the expense to Trash."
+                      : "Deletion is enabled after you save these changes."
+                    : "New expenses are automatically protected from deletion."}
+                </p>
+              </div>
+            </div>
+            {expense && (
+              <Switch
+                checked={locked}
+                onCheckedChange={setLocked}
+                aria-label={locked ? "Unlock expense" : "Lock expense"}
+              />
+            )}
+          </div>
+
           <div className="space-y-2">
             <Label>Expense title</Label>
             <Input

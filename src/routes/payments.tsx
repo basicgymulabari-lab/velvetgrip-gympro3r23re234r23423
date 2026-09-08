@@ -195,7 +195,7 @@ function PaymentsPage() {
           <span>
             {list.length} matching {tab === "pending" ? "balances" : "payments"}
           </span>
-          {getCurrentSession()?.role === "admin" && (
+          {(getCurrentSession()?.role === "admin" || getCurrentSession()?.permissions?.payments) && (
             <Button
               variant="secondary"
               size="sm"

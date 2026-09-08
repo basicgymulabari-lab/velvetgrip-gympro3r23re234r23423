@@ -149,6 +149,8 @@ export type Expense = {
   notes: string;
   attachment?: ExpenseAttachment | null;
   createdAt: string;
+  /** Locked expenses cannot be moved to Trash until unlocked from Edit Expense. */
+  locked?: boolean;
   deletedAt?: string | null;
 };
 
@@ -223,8 +225,12 @@ export type ReceptionistPermissions = {
   memberships: boolean;
   payments: boolean;
   products: boolean;
+  viewProductCost: boolean;
+  expenses: boolean;
+  reports: boolean;
   inquiries: boolean;
   notifications: boolean;
+  trash: boolean;
   viewRevenue: boolean;
 };
 
@@ -233,6 +239,12 @@ export type ReceptionistAccount = {
   name: string;
   email: string;
   passwordHash: string;
+  /**
+   * Owner-only local copy used by Staff Access so the owner can copy the
+   * receptionist login password after later permission-only saves.
+   * Legacy accounts may not have this until the password is changed once.
+   */
+  passwordCopy?: string;
   permissions?: ReceptionistPermissions;
 };
 

@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Snowflake,
   Pencil,
+  Trash2,
   Wallet,
   Eye,
 } from "lucide-react";
@@ -47,8 +48,12 @@ import {
   addNote,
   addPayment,
   addSalePayment,
+  deleteMeasurement,
+  deleteNote,
   renewMembership,
   toggleFreeze,
+  updateMeasurement,
+  updateNote,
   useGym,
 } from "@/lib/gym/store";
 import {
@@ -68,7 +73,15 @@ import {
   compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
-import type { GymState, Membership, Payment, PaymentMethod, Sale } from "@/lib/gym/types";
+import type {
+  GymState,
+  Measurement,
+  Membership,
+  Payment,
+  PaymentMethod,
+  ProgressNote,
+  Sale,
+} from "@/lib/gym/types";
 
 type CollectBalanceTarget =
   { kind: "membership"; membership: Membership } | { kind: "purchase"; sale: Sale };
@@ -113,6 +126,10 @@ function MemberProfile() {
   const [renewOpen, setRenewOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [msrOpen, setMsrOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<ProgressNote | null>(null);
+  const [editingMeasurement, setEditingMeasurement] = useState<Measurement | null>(null);
+  const [deletingNote, setDeletingNote] = useState<ProgressNote | null>(null);
+  const [deletingMeasurement, setDeletingMeasurement] = useState<Measurement | null>(null);
   const [collectFor, setCollectFor] = useState<CollectBalanceTarget | null>(null);
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
 
@@ -484,7 +501,14 @@ function MemberProfile() {
             <Panel
               title="Body Measurements"
               actions={
-                <Button size="sm" variant="secondary" onClick={() => setMsrOpen(true)}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingMeasurement(null);
+                    setMsrOpen(true);
+                  }}
+                >
                   <Plus className="mr-1.5 h-3.5 w-3.5" /> Add
                 </Button>
               }
@@ -547,6 +571,7 @@ function MemberProfile() {
                       <th className="py-3">Waist</th>
                       <th className="py-3">Arms</th>
                       <th className="py-3">Body fat</th>
+                      <th className="py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -558,6 +583,31 @@ function MemberProfile() {
                         <td className="py-3">{m.waistCm} cm</td>
                         <td className="py-3">{m.armsCm} cm</td>
                         <td className="py-3">{m.bodyFat.toFixed(1)}%</td>
+                        <td className="py-3">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="Edit measurement"
+                              onClick={() => {
+                                setEditingMeasurement(m);
+                                setMsrOpen(true);
+                              }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              aria-label="Delete measurement"
+                              onClick={() => setDeletingMeasurement(m)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -570,7 +620,14 @@ function MemberProfile() {
             <Panel
               title="Progress Notes"
               actions={
-                <Button size="sm" variant="secondary" onClick={() => setNoteOpen(true)}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingNote(null);
+                    setNoteOpen(true);
+                  }}
+                >
                   <Plus className="mr-1.5 h-3.5 w-3.5" /> Add note
                 </Button>
               }
@@ -581,11 +638,34 @@ function MemberProfile() {
                 <ul className="space-y-3">
                   {member.notes.map((n) => (
                     <li key={n.id} className="rounded-xl border border-border bg-secondary/30 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="truncate font-medium">{n.title}</p>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {shortDate(n.date)}
-                        </span>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{n.title}</p>
+                          <span className="text-xs text-muted-foreground">{shortDate(n.date)}</span>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label="Edit progress note"
+                            onClick={() => {
+                              setEditingNote(n);
+                              setNoteOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            aria-label="Delete progress note"
+                            onClick={() => setDeletingNote(n)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">{n.note}</p>
                     </li>
@@ -612,10 +692,79 @@ function MemberProfile() {
           }
         />
       )}
-      {!walkIn && <NoteDialog open={noteOpen} onOpenChange={setNoteOpen} memberId={member.id} />}
       {!walkIn && (
-        <MeasurementDialog open={msrOpen} onOpenChange={setMsrOpen} memberId={member.id} />
+        <NoteDialog
+          open={noteOpen}
+          onOpenChange={(open) => {
+            setNoteOpen(open);
+            if (!open) setEditingNote(null);
+          }}
+          memberId={member.id}
+          note={editingNote}
+        />
       )}
+      {!walkIn && (
+        <MeasurementDialog
+          open={msrOpen}
+          onOpenChange={(open) => {
+            setMsrOpen(open);
+            if (!open) setEditingMeasurement(null);
+          }}
+          memberId={member.id}
+          measurement={editingMeasurement}
+        />
+      )}
+
+      <Dialog open={Boolean(deletingNote)} onOpenChange={(open) => !open && setDeletingNote(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">Delete progress note?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete <strong className="text-foreground">{deletingNote?.title}</strong>.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeletingNote(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deletingNote) deleteNote(member.id, deletingNote.id);
+                setDeletingNote(null);
+                toast.success("Progress note deleted");
+              }}
+            >
+              Delete note
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deletingMeasurement)}
+        onOpenChange={(open) => !open && setDeletingMeasurement(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wide">Delete measurement?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This measurement from {deletingMeasurement ? shortDate(deletingMeasurement.date) : ""} will be permanently deleted.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeletingMeasurement(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deletingMeasurement) deleteMeasurement(member.id, deletingMeasurement.id);
+                setDeletingMeasurement(null);
+                toast.success("Measurement deleted");
+              }}
+            >
+              Delete measurement
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <CollectBalanceDialog
         target={collectFor}
         onClose={() => setCollectFor(null)}
@@ -993,19 +1142,28 @@ function NoteDialog({
   open,
   onOpenChange,
   memberId,
+  note: existingNote,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   memberId: string;
+  note: ProgressNote | null;
 }) {
-  const [title, setTitle] = useState("");
-  const [note, setNote] = useState("");
+  const key = existingNote?.id ?? "new";
+  const [loadedKey, setLoadedKey] = useState(key);
+  const [title, setTitle] = useState(existingNote?.title ?? "");
+  const [note, setNote] = useState(existingNote?.note ?? "");
+  if (loadedKey !== key) {
+    setLoadedKey(key);
+    setTitle(existingNote?.title ?? "");
+    setNote(existingNote?.note ?? "");
+  }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="font-display text-2xl tracking-wide">
-            Add Progress Note
+            {existingNote ? "Edit Progress Note" : "Add Progress Note"}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -1032,14 +1190,19 @@ function NoteDialog({
                   toast.error("Add a title and note");
                   return;
                 }
-                addNote(memberId, title.trim(), note.trim());
-                toast.success("Progress note saved");
+                if (existingNote) {
+                  updateNote(memberId, existingNote.id, { title: title.trim(), note: note.trim() });
+                  toast.success("Progress note updated");
+                } else {
+                  addNote(memberId, title.trim(), note.trim());
+                  toast.success("Progress note saved");
+                }
                 setTitle("");
                 setNote("");
                 onOpenChange(false);
               }}
             >
-              Save note
+              {existingNote ? "Save changes" : "Save note"}
             </Button>
           </div>
         </div>
@@ -1052,26 +1215,39 @@ function MeasurementDialog({
   open,
   onOpenChange,
   memberId,
+  measurement,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   memberId: string;
+  measurement: Measurement | null;
 }) {
-  const [form, setForm] = useState({
-    weightKg: "",
-    heightCm: "",
-    chestCm: "",
-    waistCm: "",
-    armsCm: "",
-    bodyFat: "",
+  const key = measurement?.id ?? "new";
+  const valuesFromMeasurement = (entry: Measurement | null) => ({
+    weightKg: entry ? String(entry.weightKg) : "",
+    heightCm: entry ? String(entry.heightCm) : "",
+    chestCm: entry ? String(entry.chestCm) : "",
+    waistCm: entry ? String(entry.waistCm) : "",
+    armsCm: entry ? String(entry.armsCm) : "",
+    bodyFat: entry ? String(entry.bodyFat) : "",
   });
+  const [loadedKey, setLoadedKey] = useState(key);
+  const [form, setForm] = useState({
+    ...valuesFromMeasurement(measurement),
+  });
+  if (loadedKey !== key) {
+    setLoadedKey(key);
+    setForm(valuesFromMeasurement(measurement));
+  }
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl tracking-wide">Add Measurement</DialogTitle>
+          <DialogTitle className="font-display text-2xl tracking-wide">
+            {measurement ? "Edit Measurement" : "Add Measurement"}
+          </DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4">
           {(
@@ -1101,19 +1277,25 @@ function MeasurementDialog({
                 toast.error("Enter valid positive numbers");
                 return;
               }
-              addMeasurement(memberId, {
+              const payload = {
                 weightKg: Number(form.weightKg),
                 heightCm: Number(form.heightCm || 0),
                 chestCm: Number(form.chestCm || 0),
                 waistCm: Number(form.waistCm || 0),
                 armsCm: Number(form.armsCm || 0),
                 bodyFat: Number(form.bodyFat || 0),
-              });
-              toast.success("Measurement recorded");
+              };
+              if (measurement) {
+                updateMeasurement(memberId, measurement.id, payload);
+                toast.success("Measurement updated");
+              } else {
+                addMeasurement(memberId, payload);
+                toast.success("Measurement recorded");
+              }
               onOpenChange(false);
             }}
           >
-            Save measurement
+            {measurement ? "Save changes" : "Save measurement"}
           </Button>
         </div>
       </DialogContent>

@@ -414,9 +414,13 @@ try {
   state = store.getState();
   const expense = state.expenses.find((item) => item.title === "Logic test expense");
   assert(expense);
+  assert.equal(expense.locked, true);
   store.updateExpense(expense.id, { amount: 300 });
   assert.equal(store.getState().expenses.find((item) => item.id === expense.id).amount, 300);
-  store.trashExpense(expense.id);
+  assert.equal(store.trashExpense(expense.id), false);
+  assert.equal(store.getState().expenses.find((item) => item.id === expense.id).deletedAt, null);
+  store.updateExpense(expense.id, { locked: false });
+  assert.equal(store.trashExpense(expense.id), true);
   assert(store.getState().expenses.find((item) => item.id === expense.id).deletedAt);
   store.restoreExpense(expense.id);
   assert.equal(store.getState().expenses.find((item) => item.id === expense.id).deletedAt, null);
