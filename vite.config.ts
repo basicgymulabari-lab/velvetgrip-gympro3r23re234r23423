@@ -7,7 +7,19 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-  // Use TanStack Start's standard server entry. A custom wrapper here creates
-  // a circular Cloudflare bundle and crashes the Worker before routes render.
-  tanstackStart: {},
+  nitro: false,
+  // The production frontend is a static Cloudflare Pages SPA. All privileged
+  // server logic lives in Supabase Edge Functions, so the browser bundle never
+  // needs a Cloudflare Worker/service-role environment.
+  tanstackStart: {
+    spa: {
+      enabled: true,
+      prerender: {
+        // Cloudflare Pages expects the SPA fallback at /index.html. Using the
+        // default /_shell.html triggers Pages' extensionless-HTML redirect and
+        // creates an infinite /_shell ↔ /_shell.html loop.
+        outputPath: "/index",
+      },
+    },
+  },
 });

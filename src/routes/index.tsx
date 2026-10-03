@@ -65,6 +65,7 @@ import {
 } from "@/lib/gym/selectors";
 import type { ActivityType } from "@/lib/gym/types";
 import { formatLongDate } from "@/lib/gym/calendar";
+import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "@/lib/gym/money";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -142,8 +143,8 @@ function Dashboard() {
     const isToday = (date: string) => new Date(date).toDateString() === todayKey;
     const expenses = state.expenses.filter((expense) => !expense.deletedAt);
     const collectedRevenue = totalRevenue(state);
-    const totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const productCost = state.sales.reduce((sum, sale) => sum + sale.unitCost * sale.qty, 0);
+    const totalExpenses = sumMoney(expenses, (expense) => expense.amount);
+    const productCost = sumMoney(state.sales, (sale) => multiplyMoney(sale.unitCost, sale.qty));
     const invoices = new Set([
       ...state.sales.map((sale) => sale.invoiceNo),
       ...state.payments.map((payment) => payment.invoiceNo),
@@ -166,10 +167,13 @@ function Dashboard() {
       ...state.memberships.flatMap((membership) => {
         const due = Math.max(
           0,
-          membershipPayable(membership) -
-            state.payments
-              .filter((payment) => payment.membershipId === membership.id)
-              .reduce((sum, payment) => sum + payment.amount, 0),
+          subtractMoney(
+            membershipPayable(membership),
+            sumMoney(
+              state.payments.filter((payment) => payment.membershipId === membership.id),
+              (payment) => payment.amount,
+            ),
+          ),
         );
         return due > 0 ? [{ due, date: membership.endDate }] : [];
       }),
@@ -187,7 +191,7 @@ function Dashboard() {
     balanceAges.forEach((balance) => {
       const age = Math.floor((Date.now() - new Date(balance.date).getTime()) / 86_400_000);
       const bucket = ageBuckets.find((item) => age >= item.min && age <= item.max);
-      if (bucket) bucket.amount += balance.due;
+      if (bucket) bucket.amount = addMoney(bucket.amount, balance.due);
     });
     const monthMemberships = state.memberships.filter(
       (membership) => new Date(membership.createdAt) >= monthStart,
@@ -225,7 +229,7 @@ function Dashboard() {
       totalMembers: members.length,
       expenses: totalExpenses,
       productCost,
-      net: collectedRevenue - totalExpenses - productCost,
+      net: subtractMoney(subtractMoney(collectedRevenue, totalExpenses), productCost),
       invoiceCount: invoices.size,
       productCount: liveProducts(state).length,
       attentionDues,
@@ -238,15 +242,17 @@ function Dashboard() {
         ? Math.round((renewedMembers / membersWithMemberships.length) * 100)
         : 0,
       today: {
-        payments: state.payments
-          .filter((payment) => isToday(payment.date))
-          .reduce((sum, payment) => sum + payment.amount, 0),
+        payments: sumMoney(
+          state.payments.filter((payment) => isToday(payment.date)),
+          (payment) => payment.amount,
+        ),
         sales: state.sales
           .filter((sale) => isToday(sale.date))
           .reduce((sum, sale) => sum + sale.qty, 0),
-        expenses: expenses
-          .filter((expense) => isToday(expense.date))
-          .reduce((sum, expense) => sum + expense.amount, 0),
+        expenses: sumMoney(
+          expenses.filter((expense) => isToday(expense.date)),
+          (expense) => expense.amount,
+        ),
         memberships: state.memberships.filter((membership) => isToday(membership.createdAt)).length,
       },
     };
@@ -255,6 +261,13 @@ function Dashboard() {
   if (!state || !data) return null;
   const session = getCurrentSession();
   const isReceptionist = session?.role === "receptionist";
+  const canViewMembers = !isReceptionist || Boolean(session?.permissions?.members);
+  const canViewMemberships = !isReceptionist || Boolean(session?.permissions?.memberships);
+  const canViewPayments = !isReceptionist || Boolean(session?.permissions?.payments);
+  const canViewProducts = !isReceptionist || Boolean(session?.permissions?.products);
+  const canViewExpenses = !isReceptionist || Boolean(session?.permissions?.expenses);
+  const canViewNotifications = !isReceptionist || Boolean(session?.permissions?.notifications);
+  const canViewProductCost = !isReceptionist || Boolean(session?.permissions?.viewProductCost);
   const canViewRevenue = !isReceptionist || Boolean(session?.permissions?.viewRevenue);
   const cur = state.settings.currency;
   const compactMoney = (value: number) =>
@@ -265,23 +278,27 @@ function Dashboard() {
       <PageHeader
         title="Dashboard"
         subtitle={`${state.settings.gymName} · ${formatLongDate(new Date())}`}
-        actions={!isReceptionist ? (
-          <Button asChild variant="secondary">
-            <Link to="/reports">View reports</Link>
-          </Button>
-        ) : undefined}
+        actions={
+          !isReceptionist ? (
+            <Button asChild variant="secondary">
+              <Link to="/reports">View reports</Link>
+            </Button>
+          ) : undefined
+        }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Active Members"
-          value={String(data.active)}
-          hint={`${data.totalMembers} total on roster`}
-          icon={Users}
-          tone="gold"
-          to="/members"
-          search={{ filter: "active", q: "", page: 1 }}
-        />
+      <div data-tour="dashboard-overview" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {canViewMembers && (
+          <StatCard
+            label="Active Members"
+            value={String(data.active)}
+            hint={`${data.totalMembers} total on roster`}
+            icon={Users}
+            tone="gold"
+            to="/members"
+            search={{ filter: "active", q: "", page: 1 }}
+          />
+        )}
         {canViewRevenue && (
           <StatCard
             label={metricMeta((state.settings.revenueCardMetric ?? "today") as RevenueMetric).label}
@@ -293,160 +310,167 @@ function Dashboard() {
             search={{ tab: "collected", q: "", page: 1 }}
           />
         )}
-        <StatCard
-          label="Pending Due"
-          value={money(data.due, cur)}
-          hint="Membership and product balances"
-          icon={AlertTriangle}
-          tone="warning"
-          to="/payments"
-          search={{ tab: "pending", q: "", page: 1 }}
-        />
-        <StatCard
-          label="Expired Members"
-          value={String(data.expired)}
-          hint="Needs renewal follow-up"
-          icon={CalendarX}
-          tone="danger"
-          to="/members"
-          search={{ filter: "expired", q: "", page: 1 }}
-        />
+        {canViewPayments && (
+          <StatCard
+            label="Pending Due"
+            value={money(data.due, cur)}
+            hint="Membership and product balances"
+            icon={AlertTriangle}
+            tone="warning"
+            to="/payments"
+            search={{ tab: "pending", q: "", page: 1 }}
+          />
+        )}
+        {canViewMemberships && (
+          <StatCard
+            label="Expired Members"
+            value={String(data.expired)}
+            hint="Needs renewal follow-up"
+            icon={CalendarX}
+            tone="danger"
+            to="/members"
+            search={{ filter: "expired", q: "", page: 1 }}
+          />
+        )}
       </div>
 
-      <Panel title="Quick Actions" description="Common daily tasks" className="mt-6">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {(!isReceptionist || session?.permissions?.members) && (
-            <Button asChild variant="secondary" className="justify-start">
-              <Link to="/members" search={{ filter: "all", q: "", page: 1, new: true }}>
-                <UserRoundPlus className="mr-2 h-4 w-4 text-gold" /> Add Member
-              </Link>
-            </Button>
-          )}
-          {(!isReceptionist || session?.permissions?.products) && (
-            <Button asChild variant="secondary" className="justify-start">
-              <Link to="/products" search={{ sale: undefined, sell: undefined }}>
-                <ShoppingBag className="mr-2 h-4 w-4 text-success" /> Sell Product
-              </Link>
-            </Button>
-          )}
-          {(!isReceptionist || session?.permissions?.payments) && (
-            <Button asChild variant="secondary" className="justify-start">
-              <Link to="/payments" search={{ tab: "pending", q: "", page: 1 }}>
-                <Wallet className="mr-2 h-4 w-4 text-warning" /> Record Payment
-              </Link>
-            </Button>
-          )}
-          {!isReceptionist && (
-            <Button asChild variant="secondary" className="justify-start">
-              <Link to="/expenses">
-                <ReceiptText className="mr-2 h-4 w-4 text-info" /> Add Expense
-              </Link>
-            </Button>
-          )}
-        </div>
-      </Panel>
+      <div data-tour="quick-actions">
+        <Panel title="Quick Actions" description="Common daily tasks" className="mt-6">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {(!isReceptionist || session?.permissions?.members) && (
+              <Button asChild variant="secondary" className="justify-start">
+                <Link to="/members" search={{ filter: "all", q: "", page: 1, new: true }}>
+                  <UserRoundPlus className="mr-2 h-4 w-4 text-gold" /> Add Member
+                </Link>
+              </Button>
+            )}
+            {(!isReceptionist || session?.permissions?.products) && (
+              <Button asChild variant="secondary" className="justify-start">
+                <Link to="/products" search={{ sale: undefined, sell: undefined }}>
+                  <ShoppingBag className="mr-2 h-4 w-4 text-success" /> Sell Product
+                </Link>
+              </Button>
+            )}
+            {(!isReceptionist || session?.permissions?.payments) && (
+              <Button asChild variant="secondary" className="justify-start">
+                <Link to="/payments" search={{ tab: "pending", q: "", page: 1 }}>
+                  <Wallet className="mr-2 h-4 w-4 text-warning" /> Record Payment
+                </Link>
+              </Button>
+            )}
+            {!isReceptionist && (
+              <Button asChild variant="secondary" className="justify-start">
+                <Link to="/expenses">
+                  <ReceiptText className="mr-2 h-4 w-4 text-info" /> Add Expense
+                </Link>
+              </Button>
+            )}
+          </div>
+        </Panel>
+      </div>
 
       <div className={`mt-6 grid gap-6 ${canViewRevenue ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}>
         {canViewRevenue && (
           <Panel
-          className="xl:col-span-2"
-          title="Revenue Chart"
-          description={`Membership vs product income · ${RANGE_HINT[range]}`}
-          actions={
-            <div className="flex min-w-max rounded-lg border border-border bg-secondary/50 p-0.5">
-              {RANGES.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRange(r)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
-                    range === r
-                      ? "bg-[image:var(--gradient-gold)] text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          }
-        >
-          {data.series.some((point) => point.total > 0) ? (
-            <div className="h-[250px] w-full sm:h-[290px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.series} margin={{ left: -18, right: 8, top: 8 }}>
-                  <defs>
-                    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--color-gold)" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="var(--color-gold)" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--color-success)" stopOpacity={0.4} />
-                      <stop offset="100%" stopColor="var(--color-success)" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 6"
-                    stroke="var(--color-border)"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={11}
-                    stroke="var(--color-muted-foreground)"
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={11}
-                    stroke="var(--color-muted-foreground)"
-                    tickFormatter={compactMoney}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--color-popover)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 12,
-                      fontSize: 12,
-                    }}
-                    formatter={(v: number, n: string) => [
-                      money(v, cur),
-                      n === "membership" ? "Membership" : "Products",
-                    ]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="membership"
-                    stroke="var(--color-gold)"
-                    strokeWidth={2}
-                    fill="url(#gGold)"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="product"
-                    stroke="var(--color-success)"
-                    strokeWidth={2}
-                    fill="url(#gGreen)"
-                  />
-                  <Legend
-                    iconType="circle"
-                    iconSize={8}
-                    formatter={(value: string) =>
-                      value === "membership" ? "Membership" : "Products"
-                    }
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <EmptyState title="No revenue data yet" hint="Recorded payments will appear here." />
-          )}
+            className="xl:col-span-2"
+            title="Revenue Chart"
+            description={`Membership vs product income · ${RANGE_HINT[range]}`}
+            actions={
+              <div className="flex min-w-max rounded-lg border border-border bg-secondary/50 p-0.5">
+                {RANGES.map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRange(r)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                      range === r
+                        ? "bg-[image:var(--gradient-gold)] text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            {data.series.some((point) => point.total > 0) ? (
+              <div className="h-[250px] w-full sm:h-[290px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={data.series} margin={{ left: -18, right: 8, top: 8 }}>
+                    <defs>
+                      <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--color-gold)" stopOpacity={0.55} />
+                        <stop offset="100%" stopColor="var(--color-gold)" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--color-success)" stopOpacity={0.4} />
+                        <stop offset="100%" stopColor="var(--color-success)" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid
+                      strokeDasharray="3 6"
+                      stroke="var(--color-border)"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      stroke="var(--color-muted-foreground)"
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      stroke="var(--color-muted-foreground)"
+                      tickFormatter={compactMoney}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 12,
+                        fontSize: 12,
+                      }}
+                      formatter={(v: number, n: string) => [
+                        money(v, cur),
+                        n === "membership" ? "Membership" : "Products",
+                      ]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="membership"
+                      stroke="var(--color-gold)"
+                      strokeWidth={2}
+                      fill="url(#gGold)"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="product"
+                      stroke="var(--color-success)"
+                      strokeWidth={2}
+                      fill="url(#gGreen)"
+                    />
+                    <Legend
+                      iconType="circle"
+                      iconSize={8}
+                      formatter={(value: string) =>
+                        value === "membership" ? "Membership" : "Products"
+                      }
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <EmptyState title="No revenue data yet" hint="Recorded payments will appear here." />
+            )}
           </Panel>
         )}
 
-        <Panel title="Membership Statistics" description="Active members by plan">
-          {data.plans.length > 0 ? (
+        {canViewMemberships && (
+          <Panel title="Membership Statistics" description="Active members by plan">
+            {data.plans.length > 0 ? (
             <div>
               <div className="relative h-[190px] w-full sm:h-[210px]">
                 <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 text-center">
@@ -537,217 +561,240 @@ function Dashboard() {
                 ))}
               </div>
             </div>
-          ) : (
-            <EmptyState
-              title="No active memberships"
-              hint="Plan distribution will appear after memberships are added."
-            />
-          )}
-        </Panel>
+            ) : (
+              <EmptyState
+                title="No active memberships"
+                hint="Plan distribution will appear after memberships are added."
+              />
+            )}
+          </Panel>
+        )}
       </div>
 
-      <div className={`mt-6 grid gap-6 ${canViewRevenue ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}>
-        {canViewRevenue && (
+      <div
+        className={`mt-6 grid gap-6 ${canViewRevenue && canViewProducts && canViewProductCost ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}
+      >
+        {canViewRevenue && canViewProducts && canViewProductCost && (
           <Panel
-          className="xl:col-span-2"
-          title="Sales Statistics"
-          description="Best performing products by revenue"
-          actions={
-            <span className="flex items-center gap-1.5 text-xs text-success">
-              <TrendingUp className="h-3.5 w-3.5" /> {money(data.profit, cur)} profit
-            </span>
-          }
-        >
-          {data.products.length > 0 ? (
-            <div className="h-[240px] w-full sm:h-[270px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.products} margin={{ left: -18, right: 8, top: 8 }}>
-                  <CartesianGrid
-                    strokeDasharray="3 6"
-                    stroke="var(--color-border)"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="name"
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={10}
-                    stroke="var(--color-muted-foreground)"
-                    tickFormatter={(v: string) => v.split(" ")[0]}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={11}
-                    stroke="var(--color-muted-foreground)"
-                    tickFormatter={compactMoney}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--color-secondary)", opacity: 0.4 }}
-                    contentStyle={{
-                      background: "var(--color-popover)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 12,
-                      fontSize: 12,
-                    }}
-                    formatter={(v: number) => money(v, cur)}
-                  />
-                  <Bar dataKey="revenue" radius={[6, 6, 0, 0]} fill="var(--color-gold)" />
-                  <Bar dataKey="profit" radius={[6, 6, 0, 0]} fill="var(--color-chart-3)" />
-                  <Legend
-                    iconType="circle"
-                    iconSize={8}
-                    formatter={(value: string) => (value === "revenue" ? "Revenue" : "Profit")}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <EmptyState
-              title="No product sales yet"
-              hint="Completed product sales will appear here."
-            />
-          )}
+            className="xl:col-span-2"
+            title="Sales Statistics"
+            description="Best performing products by revenue"
+            actions={
+              <span className="flex items-center gap-1.5 text-xs text-success">
+                <TrendingUp className="h-3.5 w-3.5" /> {money(data.profit, cur)} profit
+              </span>
+            }
+          >
+            {data.products.length > 0 ? (
+              <div className="h-[240px] w-full sm:h-[270px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.products} margin={{ left: -18, right: 8, top: 8 }}>
+                    <CartesianGrid
+                      strokeDasharray="3 6"
+                      stroke="var(--color-border)"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="name"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={10}
+                      stroke="var(--color-muted-foreground)"
+                      tickFormatter={(v: string) => v.split(" ")[0]}
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      stroke="var(--color-muted-foreground)"
+                      tickFormatter={compactMoney}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "var(--color-secondary)", opacity: 0.4 }}
+                      contentStyle={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 12,
+                        fontSize: 12,
+                      }}
+                      formatter={(v: number) => money(v, cur)}
+                    />
+                    <Bar dataKey="revenue" radius={[6, 6, 0, 0]} fill="var(--color-gold)" />
+                    <Bar dataKey="profit" radius={[6, 6, 0, 0]} fill="var(--color-chart-3)" />
+                    <Legend
+                      iconType="circle"
+                      iconSize={8}
+                      formatter={(value: string) => (value === "revenue" ? "Revenue" : "Profit")}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <EmptyState
+                title="No product sales yet"
+                hint="Completed product sales will appear here."
+              />
+            )}
           </Panel>
         )}
 
-        <Panel
-          title="Recent Activities"
-          description="Latest events across the club"
-          actions={
-            <Button asChild variant="ghost" size="sm" className="text-xs text-gold">
-              <Link to="/notifications">View all</Link>
-            </Button>
-          }
-        >
-          <ul className="space-y-1">
-            {state.activities.slice(0, 8).map((a) => {
-              const Icon = ACTIVITY_ICON[a.type] ?? FileText;
-              return (
-                <li
-                  key={a.id}
-                  className="flex gap-3 rounded-lg p-2 transition-colors hover:bg-secondary/50"
-                >
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-gold/25 bg-gold/10 text-gold">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{a.title}</p>
-                    <p className="truncate text-xs text-muted-foreground">{a.description}</p>
-                  </div>
-                  <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                    {relative(a.date)}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </Panel>
+        {canViewNotifications && (
+          <Panel
+            title="Recent Activities"
+            description="Latest events across the club"
+            actions={
+              <Button asChild variant="ghost" size="sm" className="text-xs text-gold">
+                <Link to="/notifications">View all</Link>
+              </Button>
+            }
+          >
+            <ul className="space-y-1">
+              {state.activities.slice(0, 8).map((a) => {
+                const Icon = ACTIVITY_ICON[a.type] ?? FileText;
+                return (
+                  <li
+                    key={a.id}
+                    className="flex gap-3 rounded-lg p-2 transition-colors hover:bg-secondary/50"
+                  >
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-gold/25 bg-gold/10 text-gold">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{a.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">{a.description}</p>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                      {relative(a.date)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Panel>
+        )}
       </div>
 
-      <Panel
-        title="Attention Required"
-        description="Items that may need action today"
-        className="mt-6"
-      >
-        <div className="grid gap-5 lg:grid-cols-3">
-          <AttentionGroup
-            title="Outstanding balances"
-            icon={AlertTriangle}
-            empty="No pending balances"
-            items={data.attentionDues.slice(0, 4).map(({ person, due }) => ({
-              id: person.id,
-              label: person.name,
-              value: money(due, cur),
-              to: `/members/${person.id}`,
-            }))}
-          />
-          <AttentionGroup
-            title="Expiring memberships"
-            icon={CalendarClock}
-            empty="No memberships expiring soon"
-            items={data.expiring.slice(0, 4).map(({ member, membership }) => ({
-              id: member.id,
-              label: member.name,
-              value: membership ? `${Math.max(0, daysUntil(membership.endDate))}d left` : "—",
-              to: `/members/${member.id}`,
-            }))}
-          />
-          <AttentionGroup
-            title="Low stock"
-            icon={Boxes}
-            empty="Stock levels look healthy"
-            items={data.lowStock.map((product) => ({
-              id: product.id,
-              label: product.name,
-              value: `${product.stock} left`,
-              to: "/products",
-            }))}
-          />
-        </div>
-      </Panel>
+      {(canViewPayments || canViewMemberships || canViewProducts) && (
+        <Panel
+          title="Attention Required"
+          description="Items that may need action today"
+          className="mt-6"
+        >
+          <div className="grid gap-5 lg:grid-cols-3">
+            {canViewPayments && (
+              <AttentionGroup
+                title="Outstanding balances"
+                icon={AlertTriangle}
+                empty="No pending balances"
+                items={data.attentionDues.slice(0, 4).map(({ person, due }) => ({
+                  id: person.id,
+                  label: person.name,
+                  value: money(due, cur),
+                  to: `/members/${person.id}`,
+                }))}
+              />
+            )}
+            {canViewMemberships && (
+              <AttentionGroup
+                title="Expiring memberships"
+                icon={CalendarClock}
+                empty="No memberships expiring soon"
+                items={data.expiring.slice(0, 4).map(({ member, membership }) => ({
+                  id: member.id,
+                  label: member.name,
+                  value: membership ? `${Math.max(0, daysUntil(membership.endDate))}d left` : "—",
+                  to: `/members/${member.id}`,
+                }))}
+              />
+            )}
+            {canViewProducts && (
+              <AttentionGroup
+                title="Low stock"
+                icon={Boxes}
+                empty="Stock levels look healthy"
+                items={data.lowStock.map((product) => ({
+                  id: product.id,
+                  label: product.name,
+                  value: `${product.stock} left`,
+                  to: "/products",
+                }))}
+              />
+            )}
+          </div>
+        </Panel>
+      )}
 
       <div className={`mt-6 grid gap-6 ${canViewRevenue ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}>
         {canViewRevenue && (
           <>
-        <Panel title="Financial Overview" description="All-time collected performance">
-          <div className="space-y-3">
-            <SummaryMetric
-              label="Collected revenue"
-              value={money(data.revenue, cur)}
-              tone="success"
-            />
-            <SummaryMetric label="Expenses" value={money(data.expenses, cur)} tone="warning" />
-            <SummaryMetric
-              label="Product cost"
-              value={money(data.productCost, cur)}
-              tone="warning"
-            />
-            <SummaryMetric
-              label="Estimated net profit"
-              value={money(data.net, cur)}
-              tone={data.net >= 0 ? "gold" : "danger"}
-              strong
-            />
-          </div>
-        </Panel>
+            <Panel title="Financial Overview" description="All-time collected performance">
+              <div className="space-y-3">
+                <SummaryMetric
+                  label="Collected revenue"
+                  value={money(data.revenue, cur)}
+                  tone="success"
+                />
+                {canViewExpenses && (
+                  <SummaryMetric label="Expenses" value={money(data.expenses, cur)} tone="warning" />
+                )}
+                {canViewProductCost && (
+                  <SummaryMetric
+                    label="Product cost"
+                    value={money(data.productCost, cur)}
+                    tone="warning"
+                  />
+                )}
+                {canViewExpenses && canViewProductCost && (
+                  <SummaryMetric
+                    label="Estimated net profit"
+                    value={money(data.net, cur)}
+                    tone={data.net >= 0 ? "gold" : "danger"}
+                    strong
+                  />
+                )}
+              </div>
+            </Panel>
 
-        <Panel title="Balance Aging" description="Outstanding amount by age">
-          <div className="space-y-4">
-            {data.ageBuckets.map((bucket) => {
-              const max = Math.max(...data.ageBuckets.map((item) => item.amount), 1);
-              return (
-                <div key={bucket.label}>
-                  <div className="mb-1.5 flex justify-between gap-3 text-xs">
-                    <span className="text-muted-foreground">{bucket.label}</span>
-                    <span className="font-medium">{money(bucket.amount, cur)}</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-                    <div
-                      className="h-full rounded-full bg-warning transition-[width]"
-                      style={{
-                        width: `${bucket.amount ? Math.max(5, (bucket.amount / max) * 100) : 0}%`,
-                      }}
-                    />
-                  </div>
+            {canViewPayments && (
+              <Panel title="Balance Aging" description="Outstanding amount by age">
+                <div className="space-y-4">
+                  {data.ageBuckets.map((bucket) => {
+                    const max = Math.max(...data.ageBuckets.map((item) => item.amount), 1);
+                    return (
+                      <div key={bucket.label}>
+                        <div className="mb-1.5 flex justify-between gap-3 text-xs">
+                          <span className="text-muted-foreground">{bucket.label}</span>
+                          <span className="font-medium">{money(bucket.amount, cur)}</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className="h-full rounded-full bg-warning transition-[width]"
+                            style={{
+                              width: `${bucket.amount ? Math.max(5, (bucket.amount / max) * 100) : 0}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        </Panel>
+              </Panel>
+            )}
           </>
         )}
 
-        <Panel title="Member Lifecycle" description="Current month and roster health">
-          <div className="grid grid-cols-2 gap-3">
-            <LifecycleMetric label="New this month" value={data.newThisMonth} />
-            <LifecycleMetric label="Renewals" value={data.renewalsThisMonth} />
-            <LifecycleMetric label="Active" value={data.active} />
-            <LifecycleMetric label="Expired" value={data.expired} />
-            <LifecycleMetric label="Renewal rate" value={`${data.renewalRate}%`} />
-            <LifecycleMetric label="Frozen" value={data.frozen} />
-          </div>
-        </Panel>
+        {canViewMemberships && (
+          <Panel title="Member Lifecycle" description="Current month and roster health">
+            <div className="grid grid-cols-2 gap-3">
+              <LifecycleMetric label="New this month" value={data.newThisMonth} />
+              <LifecycleMetric label="Renewals" value={data.renewalsThisMonth} />
+              <LifecycleMetric label="Active" value={data.active} />
+              <LifecycleMetric label="Expired" value={data.expired} />
+              <LifecycleMetric label="Renewal rate" value={`${data.renewalRate}%`} />
+              <LifecycleMetric label="Frozen" value={data.frozen} />
+            </div>
+          </Panel>
+        )}
       </div>
 
       <Panel title="Today’s Summary" description="Activity recorded today" className="mt-6">
@@ -755,28 +802,32 @@ function Dashboard() {
           {canViewRevenue && (
             <TodayMetric label="Payments received" value={money(data.today.payments, cur)} />
           )}
-          <TodayMetric label="Products sold" value={String(data.today.sales)} />
-          {canViewRevenue && (
+          {canViewProducts && <TodayMetric label="Products sold" value={String(data.today.sales)} />}
+          {canViewExpenses && (
             <TodayMetric label="Expenses recorded" value={money(data.today.expenses, cur)} />
           )}
-          <TodayMetric label="Memberships started" value={String(data.today.memberships)} />
+          {canViewMemberships && (
+            <TodayMetric label="Memberships started" value={String(data.today.memberships)} />
+          )}
         </div>
       </Panel>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Frozen memberships", String(data.frozen)],
-          ["Products in catalogue", String(data.productCount)],
-          ["Invoices generated", String(data.invoiceCount)],
-          [
-            `Expiring within ${state.settings.expiryReminderDays} days`,
-            String(
-              gymMembers(state).filter((m) => {
-                const ms = currentMembership(state, m.id);
-                return ms && statusOf(state, m.id) === "expiring";
-              }).length,
-            ),
-          ],
+          ...(canViewMemberships ? [["Frozen memberships", String(data.frozen)]] : []),
+          ...(canViewProducts ? [["Products in catalogue", String(data.productCount)]] : []),
+          ...(canViewPayments ? [["Invoices generated", String(data.invoiceCount)]] : []),
+          ...(canViewMemberships
+            ? [[
+                `Expiring within ${state.settings.expiryReminderDays} days`,
+                String(
+                  gymMembers(state).filter((m) => {
+                    const ms = currentMembership(state, m.id);
+                    return ms && statusOf(state, m.id) === "expiring";
+                  }).length,
+                ),
+              ]]
+            : []),
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-4">
             <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>

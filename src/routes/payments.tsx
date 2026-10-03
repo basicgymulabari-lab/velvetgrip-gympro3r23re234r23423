@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { Plus, Search, Printer, Wallet, AlertTriangle, ReceiptText } from "lucide-react";
@@ -43,6 +43,7 @@ import {
   totalRevenue,
 } from "@/lib/gym/selectors";
 import type { PaymentMethod } from "@/lib/gym/types";
+import { addMoney, sumMoney } from "@/lib/gym/money";
 
 const searchSchema = z.object({
   tab: fallback(z.string(), "collected").default("collected"),
@@ -333,15 +334,12 @@ function PaymentsPage() {
               <tbody>
                 {(paged as typeof pending).map(({ member, due, ms }) => {
                   const purchases = salesFor(state, member.id);
-                  const productTotal = purchases.reduce((sum, sale) => sum + sale.total, 0);
-                  const productPaid = purchases.reduce(
-                    (sum, sale) => sum + salePaid(state, sale),
-                    0,
-                  );
+                  const productTotal = sumMoney(purchases, (sale) => sale.total);
+                  const productPaid = sumMoney(purchases, (sale) => salePaid(state, sale));
                   const membershipTotal = ms ? membershipPayable(ms) : 0;
                   const membershipPaid = ms ? paidFor(state, ms.id) : 0;
-                  const price = membershipTotal + productTotal;
-                  const paid = membershipPaid + productPaid;
+                  const price = addMoney(membershipTotal, productTotal);
+                  const paid = addMoney(membershipPaid, productPaid);
                   return (
                     <tr key={member.id} className="border-b border-border/50 hover:bg-secondary/40">
                       <td className="py-3">
@@ -435,6 +433,7 @@ function PaymentDialog({
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [note, setNote] = useState("");
+  const submittingRef = useRef(false);
 
   if (!state) return null;
   const ms = memberId
@@ -515,6 +514,7 @@ function PaymentDialog({
             </Button>
             <Button
               onClick={() => {
+                if (submittingRef.current) return;
                 const value = Number(amount);
                 if (!memberId) return toast.error("Select a member");
                 if (!value || value <= 0 || Number.isNaN(value))
@@ -522,19 +522,24 @@ function PaymentDialog({
                 if (due <= 0) return toast.error("This member has no outstanding balance");
                 if (value > due)
                   return toast.error("Payment cannot exceed the outstanding balance");
-                const recorded = addPayment({
-                  memberId,
-                  membershipId: ms?.id ?? null,
-                  amount: value,
-                  method,
-                  note: note.trim() || "Manual payment entry",
-                });
-                if (!recorded) return toast.error("Payment could not be recorded");
-                toast.success("Payment recorded and invoice generated");
-                setMemberId("");
-                setAmount("");
-                setNote("");
-                onOpenChange(false);
+                submittingRef.current = true;
+                try {
+                  const recorded = addPayment({
+                    memberId,
+                    membershipId: ms?.id ?? null,
+                    amount: value,
+                    method,
+                    note: note.trim() || "Manual payment entry",
+                  });
+                  if (!recorded) return toast.error("Payment could not be recorded");
+                  toast.success("Payment recorded and invoice generated");
+                  setMemberId("");
+                  setAmount("");
+                  setNote("");
+                  onOpenChange(false);
+                } finally {
+                  submittingRef.current = false;
+                }
               }}
             >
               Record payment

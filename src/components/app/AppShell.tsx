@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -26,6 +26,15 @@ import { toast } from "sonner";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "./NotificationBell";
 import { GlobalSearch } from "./GlobalSearch";
+import { APP_TOUR_REQUEST_KEY, OnboardingTour } from "./OnboardingTour";
+import { SubscriptionPaywall } from "./SubscriptionPaywall";
+import {
+  localSubscriptionDaysRemaining,
+  refreshSubscription,
+  SUBSCRIPTION_PAYWALL_EVENT,
+  useSubscription,
+  verifyStripeCheckout,
+} from "@/lib/billing/client";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -42,6 +51,7 @@ const NAV = [
 ] as const;
 
 const SIDEBAR_COLLAPSED_KEY = "ironvault.sidebar.collapsed";
+const APP_TOUR_VERSION = "v1";
 // Staff Access and account security live inside Settings, so Settings remains owner-only.
 // Every operational area can be delegated individually by the owner.
 const OWNER_ONLY_ROUTES = ["/settings"];
@@ -60,6 +70,7 @@ const RECEPTIONIST_ROUTE_PERMISSION = {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const state = useGym();
+  const subscription = useSubscription();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -67,21 +78,37 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [signingOut, setSigningOut] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  const [paywallReason, setPaywallReason] = useState<"member-limit" | "manage">("manage");
+  const tourAutoChecked = useRef(false);
+  const billingAutoChecked = useRef(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const subscriptionDays = localSubscriptionDaysRemaining(subscription);
 
   useEffect(() => {
-    // A fresh local clone intentionally has no Supabase .env values. In that
-    // case the app uses its existing local demo/session flow instead of
-    // mounting cloud auth and throwing from the Supabase client.
+    // Supabase Auth is the only authentication source. A build without public
+    // Supabase configuration cannot establish an application session.
     if (!isSupabaseConfigured()) return;
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_OUT" && getCurrentSession()?.role === "admin") {
+      if (event === "SIGNED_OUT" && getCurrentSession()) {
         setSessionChecked(false);
         void navigate({ to: "/login", replace: true });
       }
     });
     return () => data.subscription.unsubscribe();
   }, [navigate]);
+
+  useEffect(() => {
+    const handleSyncError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      toast.error(
+        detail?.message ?? "Your latest change could not be saved. Check your connection and retry.",
+      );
+    };
+    window.addEventListener("ironvault:cloud-sync-error", handleSyncError);
+    return () => window.removeEventListener("ironvault:cloud-sync-error", handleSyncError);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -152,6 +179,101 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const openPaywall = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: "member-limit" | "manage" }>).detail;
+      setPaywallReason(detail?.reason === "member-limit" ? "member-limit" : "manage");
+      setPaywallOpen(true);
+    };
+    window.addEventListener(SUBSCRIPTION_PAYWALL_EVENT, openPaywall);
+    return () => window.removeEventListener(SUBSCRIPTION_PAYWALL_EVENT, openPaywall);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionChecked || !ready || !state || billingAutoChecked.current) return;
+    const currentSession = getCurrentSession();
+    if (!currentSession) return;
+    billingAutoChecked.current = true;
+
+    const url = new URL(window.location.href);
+    const billing = url.searchParams.get("billing");
+    const provider = url.searchParams.get("provider");
+    const stripeSessionId = url.searchParams.get("session_id");
+
+    const cleanBillingQuery = () => {
+      if (!billing) return;
+      url.searchParams.delete("billing");
+      url.searchParams.delete("provider");
+      url.searchParams.delete("session_id");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    };
+
+    if (
+      currentSession.role === "admin" &&
+      billing === "success" &&
+      provider === "stripe" &&
+      stripeSessionId
+    ) {
+      void verifyStripeCheckout(stripeSessionId)
+        .then((entitlement) => {
+          if (entitlement.active)
+            toast.success("IRONVAULT Pro is active. Your member limit is unlocked.");
+          else toast.info("Payment received. Subscription activation is still being confirmed.");
+        })
+        .catch((error) => {
+          toast.error(
+            error instanceof Error ? error.message : "Could not verify the Stripe payment.",
+          );
+        })
+        .finally(cleanBillingQuery);
+      return;
+    }
+
+    if (billing === "cancelled") {
+      toast.info("Subscription checkout was cancelled. No access changes were made.");
+      cleanBillingQuery();
+    }
+    void refreshSubscription();
+  }, [ready, sessionChecked, state]);
+
+  useEffect(() => {
+    if (!sessionChecked || !ready || !subscription.active || subscriptionDays > 7) return;
+    const currentSession = getCurrentSession();
+    if (currentSession?.role !== "admin") return;
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `ironvault.subscription-expiry-warning.${today}`;
+    if (window.sessionStorage.getItem(key) === "shown") return;
+    window.sessionStorage.setItem(key, "shown");
+    toast.warning(
+      `IRONVAULT Pro expires in ${subscriptionDays} day${subscriptionDays === 1 ? "" : "s"}. Renew it to keep adding members beyond the free limit.`,
+    );
+  }, [ready, sessionChecked, subscription.active, subscriptionDays]);
+
+  useEffect(() => {
+    if (!sessionChecked || !ready || !state || tourAutoChecked.current) return;
+    const currentSession = getCurrentSession();
+    if (!currentSession) return;
+    tourAutoChecked.current = true;
+    const key = `ironvault.app-tour.${APP_TOUR_VERSION}.${currentSession.email.toLowerCase()}`;
+    if (window.sessionStorage.getItem(APP_TOUR_REQUEST_KEY) === "true") {
+      window.sessionStorage.removeItem(APP_TOUR_REQUEST_KEY);
+      if (window.innerWidth >= 1024) setSidebarCollapsed(false);
+      setTourOpen(true);
+      return;
+    }
+    if (window.localStorage.getItem(key) !== "done") {
+      const timer = window.setTimeout(() => {
+        if (window.innerWidth >= 1024) setSidebarCollapsed(false);
+        setTourOpen(true);
+      }, 450);
+      return () => window.clearTimeout(timer);
+    }
+  }, [ready, sessionChecked, state]);
+
   if (!sessionChecked || !ready || !state) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -165,6 +287,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const session = getCurrentSession();
   if (!session) return null;
+  const dismissTour = () => {
+    const key = `ironvault.app-tour.${APP_TOUR_VERSION}.${session.email.toLowerCase()}`;
+    window.localStorage.setItem(key, "done");
+    setTourOpen(false);
+  };
   const visibleNav =
     session.role === "receptionist"
       ? NAV.filter(({ to }) => {
@@ -178,6 +305,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       {session.role === "admin" && <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />}
+      <OnboardingTour open={tourOpen} onDismiss={dismissTour} />
+      <SubscriptionPaywall
+        open={paywallOpen}
+        onOpenChange={setPaywallOpen}
+        reason={paywallReason}
+        canPurchase={session.role === "admin"}
+      />
 
       {/* Sidebar */}
       <aside
@@ -191,6 +325,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-3 px-5 py-6">
             <button
               type="button"
+              data-tour="sidebar-brand"
               className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/70"
               aria-label="Collapse sidebar"
               title="Collapse sidebar"
@@ -225,6 +360,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Link
                 key={to}
                 to={to}
+                data-tour={`nav-${label.toLowerCase()}`}
                 activeOptions={{ exact: to === "/" }}
                 className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 transition-all hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[status=active]:bg-sidebar-accent data-[status=active]:text-gold"
               >
@@ -308,6 +444,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {session.role === "admin" ? (
               <button
                 onClick={() => setSearchOpen(true)}
+                data-tour="global-search"
                 className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-secondary/60 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-gold/40 lg:w-[380px]"
               >
                 <Search className="h-4 w-4 shrink-0" />
@@ -320,12 +457,49 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div />
             )}
             <div className="flex items-center gap-2 justify-self-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaywallReason("manage");
+                  setPaywallOpen(true);
+                }}
+                className={cn(
+                  "hidden items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors sm:flex",
+                  subscription.active
+                    ? subscriptionDays <= 7
+                      ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/15"
+                      : "border-success/35 bg-success/10 text-success hover:bg-success/15"
+                    : subscription.status === "expired"
+                      ? "border-warning/35 bg-warning/10 text-warning hover:bg-warning/15"
+                      : "border-border bg-secondary/60 text-muted-foreground hover:border-gold/40 hover:text-gold",
+                )}
+                title={
+                  subscription.active && subscription.currentPeriodEnd
+                    ? `Pro expires ${new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(subscription.currentPeriodEnd))}`
+                    : subscription.status === "expired"
+                      ? "Pro expired — renew access"
+                      : `Free plan — up to 10 members`
+                }
+              >
+                <BadgeCheck className="h-3.5 w-3.5" />
+                {subscription.active
+                  ? `Pro · ${subscriptionDays}d`
+                  : subscription.status === "expired"
+                    ? "Pro expired"
+                    : "Free · 10 max"}
+              </button>
               {(session.role === "admin" || session.permissions?.notifications) && (
-                <NotificationBell />
+                <span data-tour="header-notifications">
+                  <NotificationBell />
+                </span>
               )}
               {(session.role === "admin" || session.permissions?.members) && (
                 <Button asChild size="sm" className="hidden font-semibold sm:inline-flex">
-                  <Link to="/members" search={{ filter: "all", q: "", page: 1, new: true }}>
+                  <Link
+                    to="/members"
+                    search={{ filter: "all", q: "", page: 1, new: true }}
+                    data-tour="add-member"
+                  >
                     Add Member
                   </Link>
                 </Button>

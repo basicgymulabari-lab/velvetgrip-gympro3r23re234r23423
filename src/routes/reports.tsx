@@ -20,9 +20,10 @@ import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel } from "@/components/app/Panel";
 import { Button } from "@/components/ui/button";
 import { AppDatePicker } from "@/components/app/AppDatePicker";
-import { useGym } from "@/lib/gym/store";
+import { getCurrentSession, useGym } from "@/lib/gym/store";
 import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
 import type { GymState } from "@/lib/gym/types";
+import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "@/lib/gym/money";
 import {
   activeMembers,
   gymMembers,
@@ -108,13 +109,15 @@ function customRevenueSeries(state: GymState, start: string, end: string) {
   }
   return buckets.map((bucket) => {
     const inBucket = (date: string) => inWindow(date, bucket);
-    const membership = state.payments
-      .filter((payment) => payment.kind === "membership" && inBucket(payment.date))
-      .reduce((sum, payment) => sum + payment.amount, 0);
-    const product = state.payments
-      .filter((payment) => payment.kind === "product" && inBucket(payment.date))
-      .reduce((sum, payment) => sum + payment.amount, 0);
-    return { label: bucket.label, membership, product, total: membership + product };
+    const membership = sumMoney(
+      state.payments.filter((payment) => payment.kind === "membership" && inBucket(payment.date)),
+      (payment) => payment.amount,
+    );
+    const product = sumMoney(
+      state.payments.filter((payment) => payment.kind === "product" && inBucket(payment.date)),
+      (payment) => payment.amount,
+    );
+    return { label: bucket.label, membership, product, total: addMoney(membership, product) };
   });
 }
 
@@ -135,6 +138,9 @@ function ReportsPage() {
   );
 
   if (!state) return null;
+  const session = getCurrentSession();
+  const canViewProductProfit =
+    session?.role !== "receptionist" || Boolean(session.permissions?.viewProductCost);
   const cur = state.settings.currency;
   const dist = planDistribution(state);
   const products = topProducts(state, 5);
@@ -142,15 +148,19 @@ function ReportsPage() {
   const customValid = selectedWindow.start <= selectedWindow.end;
   const reportRevenue =
     range === "custom"
-      ? state.payments
-          .filter((payment) => customValid && inWindow(payment.date, selectedWindow))
-          .reduce((sum, payment) => sum + payment.amount, 0)
+      ? sumMoney(
+          state.payments.filter(
+            (payment) => customValid && inWindow(payment.date, selectedWindow),
+          ),
+          (payment) => payment.amount,
+        )
       : revenueForMetric(state, rangeToMetric(range));
   const reportProfit =
     range === "custom"
-      ? state.sales
-          .filter((sale) => customValid && inWindow(sale.date, selectedWindow))
-          .reduce((sum, sale) => sum + sale.total - sale.unitCost * sale.qty, 0)
+      ? sumMoney(
+          state.sales.filter((sale) => customValid && inWindow(sale.date, selectedWindow)),
+          (sale) => subtractMoney(sale.total, multiplyMoney(sale.unitCost, sale.qty)),
+        )
       : profitOfSales(state, metricStart(rangeToMetric(range)));
   const reportLabel =
     range === "custom" ? "Custom revenue" : metricMeta(rangeToMetric(range)).label;
@@ -168,7 +178,7 @@ function ReportsPage() {
       ["Summary", ""],
       ["Selected revenue", String(reportRevenue)],
       ["Pending dues", String(totalDue(state))],
-      ["Product profit", String(reportProfit)],
+      ...(canViewProductProfit ? [["Product profit", String(reportProfit)]] : []),
       ["Active members", String(statuses.active ?? 0)],
     ];
     const csv = rows.map((r) => r.join(",")).join("\n");
@@ -251,7 +261,7 @@ function ReportsPage() {
         {[
           [reportLabel, money(reportRevenue, cur)],
           ["Pending dues", money(totalDue(state), cur)],
-          ["Product profit", money(reportProfit, cur)],
+          ...(canViewProductProfit ? [["Product profit", money(reportProfit, cur)]] : []),
           ["Active members", String(statuses.active ?? 0)],
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-5">

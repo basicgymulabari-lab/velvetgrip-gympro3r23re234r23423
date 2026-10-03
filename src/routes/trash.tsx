@@ -29,6 +29,8 @@ import {
   trashedExpenses,
 } from "@/lib/gym/selectors";
 import type { Member } from "@/lib/gym/types";
+import { openSubscriptionPaywall } from "@/lib/billing/client";
+import { deletePrivateAsset } from "@/lib/gym/storage";
 
 export const Route = createFileRoute("/trash")({
   head: () => ({
@@ -120,7 +122,13 @@ function TrashPage() {
                             size="sm"
                             variant="secondary"
                             onClick={() => {
-                              restoreMember(m.id);
+                              if (!restoreMember(m.id)) {
+                                openSubscriptionPaywall("member-limit");
+                                toast.info(
+                                  "Restoring this member would exceed the free 10-member limit.",
+                                );
+                                return;
+                              }
                               toast.success(`${m.name} restored`);
                             }}
                           >
@@ -356,11 +364,24 @@ function TrashPage() {
                             size="sm"
                             variant="ghost"
                             className="text-destructive hover:text-destructive"
-                            onClick={() => {
-                              if (deleteExpensePermanently(e.id)) {
-                                toast.success("Expense permanently deleted");
-                              } else {
-                                toast.error("This expense is locked and cannot be permanently deleted.");
+                            onClick={async () => {
+                              if (e.locked !== false) {
+                                toast.error(
+                                  "This expense is locked and cannot be permanently deleted.",
+                                );
+                                return;
+                              }
+                              try {
+                                if (e.attachment?.path) await deletePrivateAsset(e.attachment.path);
+                                if (deleteExpensePermanently(e.id)) {
+                                  toast.success("Expense permanently deleted");
+                                }
+                              } catch (error) {
+                                toast.error(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "The private attachment could not be removed.",
+                                );
                               }
                             }}
                           >
@@ -412,11 +433,20 @@ function ConfirmDialog({ member, onClose }: { member: Member | null; onClose: ()
             <Button
               variant="destructive"
               disabled={text !== "DELETE"}
-              onClick={() => {
-                deleteMemberPermanently(member.id);
-                toast.success("Member permanently deleted");
-                setText("");
-                onClose();
+              onClick={async () => {
+                try {
+                  if (member.photo) await deletePrivateAsset(member.photo);
+                  deleteMemberPermanently(member.id);
+                  toast.success("Member permanently deleted");
+                  setText("");
+                  onClose();
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "The private member photo could not be removed.",
+                  );
+                }
               }}
             >
               Delete permanently

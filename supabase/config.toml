@@ -1,1 +1,54 @@
-project_id = "quscskzcjcgelideiqfz"
+project_id = "aghfjfsocgqkkrjffsnz"
+
+[functions.stripe-checkout]
+verify_jwt = true
+
+[functions.stripe-verify]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.razorpay-create]
+verify_jwt = true
+
+[functions.razorpay-verify]
+verify_jwt = true
+
+[functions.razorpay-webhook]
+verify_jwt = false
+
+[functions.staff-receptionist]
+verify_jwt = true
+
+[auth]
+additional_redirect_urls = [
+  "https://ironvault-gym.pages.dev/login",
+  "https://fe1cc9b1.ironvault-gym.pages.dev/login",
+  "https://velvetgrip-gympro3r23re234r23423.basicgymulabari.workers.dev/login",
+  "http://localhost:5173/login",
+  "http://127.0.0.1:5173/login",
+  "http://localhost:4173/login",
+  "http://localhost:8080/login",
+]
+site_url = "https://velvetgrip-gympro3r23re234r23423.basicgymulabari.workers.dev"
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.external.google]
+client_id = "456317071655-f0ejauvmsqn3p1g07uokn11ekequ37jo.apps.googleusercontent.com"
+enabled = true
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[db.pooler]
+default_pool_size = 15
+max_client_conn = 200
+
+[storage.vector]
+enabled = false

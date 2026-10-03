@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { Search, Plus, Eye, Pencil, Trash2, Filter } from "lucide-react";
@@ -9,6 +9,7 @@ import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
 import { TablePager } from "@/components/app/TablePager";
 import { MemberFormDialog } from "@/components/app/MemberFormDialog";
+import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -33,6 +34,12 @@ import {
   statusOf,
 } from "@/lib/gym/selectors";
 import type { Member } from "@/lib/gym/types";
+import {
+  FREE_MEMBER_LIMIT,
+  openSubscriptionPaywall,
+  regularMemberCount,
+  useSubscription,
+} from "@/lib/billing/client";
 
 const searchSchema = z.object({
   filter: fallback(z.string(), "all").default("all"),
@@ -70,9 +77,10 @@ const PAGE_SIZE = 8;
 
 function MembersPage() {
   const state = useGym();
+  const subscription = useSubscription();
   const navigate = useNavigate({ from: "/members/" });
   const search = Route.useSearch();
-  const [formOpen, setFormOpen] = useState(search.new);
+  const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
   const [toTrash, setToTrash] = useState<Member | null>(null);
 
@@ -81,6 +89,23 @@ function MembersPage() {
     : "all";
   const q = search.q.slice(0, 60).toLowerCase();
   const page = Math.max(1, search.page);
+  const registeredMembers = state ? regularMemberCount(state) : 0;
+  const memberLimitReached = registeredMembers >= FREE_MEMBER_LIMIT && !subscription.active;
+
+  useEffect(() => {
+    if (!search.new || !state) return;
+    if (memberLimitReached) {
+      setFormOpen(false);
+      openSubscriptionPaywall("member-limit");
+      void navigate({
+        search: (previous: Record<string, unknown>) => ({ ...previous, new: false }) as never,
+        replace: true,
+      });
+      return;
+    }
+    setEditing(null);
+    setFormOpen(true);
+  }, [memberLimitReached, navigate, search.new, state]);
 
   const rows = useMemo(() => {
     if (!state) return [];
@@ -123,6 +148,10 @@ function MembersPage() {
         actions={
           <Button
             onClick={() => {
+              if (memberLimitReached) {
+                openSubscriptionPaywall("member-limit");
+                return;
+              }
               setEditing(null);
               setFormOpen(true);
             }}
@@ -187,10 +216,11 @@ function MembersPage() {
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl border border-gold/25 bg-secondary text-xs font-semibold text-gold">
                           {member.photo ? (
-                            <img
-                              src={member.photo}
+                            <PrivateAssetImage
+                              source={member.photo}
                               alt={member.name}
                               className="h-full w-full object-cover"
+                              fallback={member.name.slice(0, 2).toUpperCase()}
                             />
                           ) : (
                             member.name.slice(0, 2).toUpperCase()

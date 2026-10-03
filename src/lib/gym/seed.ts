@@ -559,10 +559,9 @@ export function buildSeed(): GymState {
 
   return {
     version: 1,
-    // sha-256 of "admin123"
     auth: {
-      email: "admin@ironvault.gym",
-      passwordHash: "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      email: "",
+      passwordHash: "",
     },
     settings: {
       gymName: "IRONVAULT",

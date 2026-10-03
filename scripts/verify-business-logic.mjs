@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { createServer } from "vite";
 
+process.env.IRONVAULT_LOGIC_TESTS = "1";
+process.env.VITE_ENABLE_LOCAL_BILLING = "true";
+// The developer may have a real Supabase `.env.local`; business-logic tests
+// intentionally exercise the isolated local state model instead.
+process.env.VITE_SUPABASE_URL = "";
+process.env.VITE_SUPABASE_PUBLISHABLE_KEY = "";
+process.env.SUPABASE_URL = "";
+process.env.SUPABASE_PUBLISHABLE_KEY = "";
+
 class MemoryStorage {
   #values = new Map();
 
@@ -36,6 +45,7 @@ const vite = await createServer({
 
 try {
   const store = await vite.ssrLoadModule("/src/lib/gym/store.ts");
+  const billing = await vite.ssrLoadModule("/src/lib/billing/client.ts");
   const selectors = await vite.ssrLoadModule("/src/lib/gym/selectors.ts");
   const calendar = await vite.ssrLoadModule("/src/lib/gym/calendar.ts");
   const phone = await vite.ssrLoadModule("/src/lib/gym/phone.ts");
@@ -83,44 +93,7 @@ try {
     "My Gym",
     "workspaces must be independent",
   );
-
-  const receptionistPassword = "FrontDesk#2026";
-  assert.equal(
-    await store.saveReceptionistAccount({
-      enabled: true,
-      name: "Reception Test",
-      email: "reception.test@example.com",
-      password: "admin123",
-      permissions: store.DEFAULT_RECEPTIONIST_PERMISSIONS,
-    }),
-    false,
-    "receptionist must not share the administrator password",
-  );
-  assert.equal(
-    await store.saveReceptionistAccount({
-      enabled: true,
-      name: "Reception Test",
-      email: "reception.test@example.com",
-      password: ` ${receptionistPassword} `,
-      permissions: store.DEFAULT_RECEPTIONIST_PERMISSIONS,
-    }),
-    true,
-    "receptionist account should save",
-  );
-  assert(
-    window.localStorage.getItem("ironvault.receptionist.v1"),
-    "receptionist credentials should persist independently from the main application database",
-  );
-  assert.equal(await store.login("admin@ironvault.gym", "admin123"), true);
-  assert.equal(store.getCurrentSession()?.role, "admin");
-  store.logout();
-  assert.equal(
-    await store.login(" RECEPTION.TEST@EXAMPLE.COM ", receptionistPassword),
-    true,
-    "saved receptionist credentials should sign in",
-  );
-  assert.equal(store.getCurrentSession()?.role, "receptionist");
-  store.logout();
+  store.__setStateForLogicTests(demoState);
 
   const assertIntegrity = (state) => {
     const unique = (items, label) => {
@@ -172,7 +145,11 @@ try {
     assert(selectors.totalDue(state) >= 0);
   };
 
-  store.setupTemplateData();
+  assert.equal(
+    store.setupTemplateData(),
+    false,
+    "free workspaces must not load a template containing more than 10 active members",
+  );
   let state = store.getState();
   assertIntegrity(state);
   assert(state.expenses.length > 0, "starter data must exercise expense reporting");
@@ -188,32 +165,53 @@ try {
   assert.equal(phone.phoneInputValue("9876543210123", "nepal"), "+977 9876543210");
   assert.equal(phone.localPhoneDigits("+977 9876543210"), "9876543210");
 
-  assert.equal(await store.login("admin@ironvault.gym", "wrong-password"), false);
-  assert.equal(await store.login("admin@ironvault.gym", "admin123"), true);
-  assert.equal(store.isLoggedIn(), true);
-  window.localStorage.setItem(
-    "ironvault.session.v1",
-    JSON.stringify({ at: 1, expiresAt: 2, email: state.auth.email }),
+  const blockedMemberCount = state.members.length;
+  assert.equal(
+    store.addMember({
+      name: "Blocked Free Member",
+      email: "blocked-free@example.com",
+      phone: "+91 90000 11111",
+      gender: "other",
+      dob: "1995-01-01T00:00:00.000Z",
+      address: "Test address",
+      emergencyContact: "+91 91111 11111",
+    }),
+    false,
+    "free workspaces above the 10-member allowance must reject additional members",
   );
-  window.sessionStorage.clear();
-  assert.equal(store.isLoggedIn(), false, "expired sessions must be rejected");
+  assert.equal(store.getState().members.length, blockedMemberCount);
+
+  // Bring the seeded demo down to nine active gym members so the normal
+  // add-member business-logic checks below can exercise the final free slot.
+  state.members
+    .filter((member) => !member.deletedAt && member.type !== "walk_in")
+    .slice(0, 7)
+    .forEach((member) => store.trashMember(member.id, "Logic test"));
+  state = store.getState();
+  assert.equal(
+    state.members.filter((member) => !member.deletedAt && member.type !== "walk_in").length,
+    9,
+  );
 
   const memberCount = state.members.length;
-  store.addMember({
-    name: "Logic Test Member",
-    email: "logic@example.com",
-    phone: "+91 90000 00000",
-    gender: "other",
-    dob: "1995-01-01T00:00:00.000Z",
-    address: "Test address",
-    emergencyContact: "+91 91111 11111",
-    planId: "plan_monthly",
-    startDate: "2030-01-10T00:00:00.000Z",
-    joiningFee: 750,
-    discount: 100,
-    paidNow: 500,
-    paymentMethod: "upi",
-  });
+  assert.equal(
+    store.addMember({
+      name: "Logic Test Member",
+      email: "logic@example.com",
+      phone: "+91 90000 00000",
+      gender: "other",
+      dob: "1995-01-01T00:00:00.000Z",
+      address: "Test address",
+      emergencyContact: "+91 91111 11111",
+      planId: "plan_monthly",
+      startDate: "2030-01-10T00:00:00.000Z",
+      joiningFee: 750,
+      discount: 100,
+      paidNow: 500,
+      paymentMethod: "upi",
+    }),
+    true,
+  );
   state = store.getState();
   assert.equal(state.members.length, memberCount + 1);
   const testMember = state.members.find((item) => item.email === "logic@example.com");
@@ -234,6 +232,46 @@ try {
     state.payments.find((payment) => payment.membershipId === membership.id)?.method,
     "upi",
   );
+  const trashedSeedMember = state.members.find(
+    (item) => item.deletedAt && item.type !== "walk_in" && item.id !== testMember.id,
+  );
+  assert(trashedSeedMember);
+  assert.equal(
+    store.restoreMember(trashedSeedMember.id),
+    false,
+    "restoring a regular member must not bypass the free 10-member limit",
+  );
+  assert.equal(billing.isLocalBillingMode(), true);
+  billing.activateLocalPro(30);
+  assert.equal(billing.getSubscriptionSnapshot().active, true);
+  assert.equal(billing.getSubscriptionSnapshot().source, "local");
+  assert(billing.localSubscriptionDaysRemaining() >= 29);
+  assert.equal(
+    store.restoreMember(trashedSeedMember.id),
+    true,
+    "local Pro must unlock roster growth for pre-deployment subscription testing",
+  );
+  assert.equal(
+    store.getState().members.filter((member) => !member.deletedAt && member.type !== "walk_in")
+      .length,
+    11,
+  );
+  billing.expireLocalProNow();
+  assert.equal(billing.getSubscriptionSnapshot().status, "expired");
+  const anotherTrashedMember = store
+    .getState()
+    .members.find(
+      (item) => item.deletedAt && item.type !== "walk_in" && item.id !== trashedSeedMember.id,
+    );
+  assert(anotherTrashedMember);
+  assert.equal(
+    store.restoreMember(anotherTrashedMember.id),
+    false,
+    "expired local Pro must immediately restore the free roster-growth restriction",
+  );
+  store.trashMember(trashedSeedMember.id, "Logic test cleanup");
+  billing.resetLocalPro();
+  assert.equal(billing.getSubscriptionSnapshot().status, "free");
   store.addPayment({
     memberId: testMember.id,
     membershipId: membership.id,
@@ -255,20 +293,28 @@ try {
   state = store.getState();
   const lifetimePlan = state.plans.find((item) => item.name === "Life Time");
   assert(lifetimePlan);
-  store.addMember({
-    name: "Lifetime Test Member",
-    email: "lifetime@example.com",
-    phone: "+91 92222 22222",
-    gender: "other",
-    dob: "1990-01-01T00:00:00.000Z",
-    address: "Test address",
-    emergencyContact: "",
-    planId: lifetimePlan.id,
-    startDate: "2030-01-10T00:00:00.000Z",
-    joiningFee: 1000,
-    paidNow: 0,
-    paymentMethod: "upi",
-  });
+  const activeSeedMember = state.members.find(
+    (item) => !item.deletedAt && item.type !== "walk_in" && item.id !== testMember.id,
+  );
+  assert(activeSeedMember);
+  store.trashMember(activeSeedMember.id, "Logic test");
+  assert.equal(
+    store.addMember({
+      name: "Lifetime Test Member",
+      email: "lifetime@example.com",
+      phone: "+91 92222 22222",
+      gender: "other",
+      dob: "1990-01-01T00:00:00.000Z",
+      address: "Test address",
+      emergencyContact: "",
+      planId: lifetimePlan.id,
+      startDate: "2030-01-10T00:00:00.000Z",
+      joiningFee: 1000,
+      paidNow: 0,
+      paymentMethod: "upi",
+    }),
+    true,
+  );
   state = store.getState();
   const lifetimeMember = state.members.find((item) => item.email === "lifetime@example.com");
   assert(lifetimeMember);
@@ -475,10 +521,14 @@ try {
     assert.equal(state[key].length, 0, `${key} must be empty after reset`);
   }
   assert.equal(state.invoiceSeq, 0);
-  store.setupTemplateData();
+  assert.equal(
+    store.setupTemplateData(),
+    false,
+    "free workspaces must not bypass the member allowance through template data",
+  );
   state = store.getState();
   assert.deepEqual(state.settings, settingsBeforeReset);
-  assert(state.members.length > 0 && state.plans.length > 0 && state.products.length > 0);
+  assert.equal(state.members.length, 0);
   assertIntegrity(state);
   store.restoreBackup(backup);
   assert.equal(

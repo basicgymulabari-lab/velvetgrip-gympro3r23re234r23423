@@ -49,6 +49,7 @@ import {
 } from "@/lib/gym/selectors";
 import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
 import type { GymState, PaymentMethod, Product, ProductCategory, Sale } from "@/lib/gym/types";
+import { multiplyMoney, normalizeMoney, subtractMoney } from "@/lib/gym/money";
 
 /** Builds the invoice view from the already-saved sale record — never regenerates one. */
 function saleInvoice(state: GymState, sale: Sale): InvoiceData {
@@ -927,25 +928,25 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const cur = state.settings.currency;
   const n = Number(qty);
   const qtyValid = Number.isInteger(n) && n >= 1 && n <= product.stock;
-  const gross = product.price * (qtyValid ? n : 0);
+  const gross = multiplyMoney(product.price, qtyValid ? n : 0);
   const rawDiscount =
     discountType === "none"
       ? 0
       : discountType === "percent"
         ? (gross * (Number(discountValue) || 0)) / 100
         : Number(discountValue) || 0;
-  const discountAmount = Math.min(Math.max(0, Math.round(rawDiscount)), gross);
+  const discountAmount = Math.min(Math.max(0, normalizeMoney(rawDiscount)), gross);
   const discountValid =
     discountType === "none" ||
     (discountValue !== "" &&
       Number.isFinite(Number(discountValue)) &&
       Number(discountValue) >= 0 &&
       (discountType === "percent" ? Number(discountValue) <= 100 : Number(discountValue) <= gross));
-  const total = gross - discountAmount;
+  const total = subtractMoney(gross, discountAmount);
   const paidNum = Number(paid);
   const paidEntered = paid.trim() !== "";
   const paidValid = paidEntered && Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= total;
-  const remaining = Math.max(0, total - (paidValid ? paidNum : 0));
+  const remaining = Math.max(0, subtractMoney(total, paidValid ? paidNum : 0));
   const isWalkIn = memberId === "walkin";
   const walkInValid =
     !isWalkIn || (walkName.trim().length >= 2 && walkPhone.trim().replace(/\D/g, "").length >= 8);

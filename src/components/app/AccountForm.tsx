@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
-import { completeCloudLogin, login, getState } from "@/lib/gym/store";
+import {
+  completeCloudLogin,
+  getCurrentSession,
+  logoutSecurely,
+  startLocalDemoSession,
+} from "@/lib/gym/store";
 import { signInWithGoogle } from "@/lib/gym/cloud";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +16,7 @@ import { Label } from "@/components/ui/label";
 type Mode = "signin" | "signup" | "forgot" | "reset";
 export function AccountForm() {
   const cloudAuthAvailable = isSupabaseConfigured();
+  const localDemoMode = import.meta.env.DEV && import.meta.env.VITE_LOCAL_DEMO_MODE === "true";
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("signin");
   const [staff, setStaff] = useState(false);
@@ -109,16 +115,25 @@ export function AccountForm() {
     event.preventDefault();
     await run(async () => {
       const normalized = email.trim().toLowerCase();
+      if (!cloudAuthAvailable && localDemoMode && mode === "signin") {
+        if (staff) throw new Error("The local demo includes the gym-owner account only.");
+        if (normalized !== "demo@ironvault.local" || password !== "DemoGym2026!") {
+          throw new Error("Use the demo email and password shown below.");
+        }
+        startLocalDemoSession();
+        await navigate({ to: "/", replace: true });
+        return;
+      }
       if (mode === "forgot") {
-        if (staff) {
+        if (!cloudAuthAvailable && staff) {
           setNotice(
-            "Ask your gym owner to reset your password in Settings → Staff Access. Receptionist accounts currently work only in the browser containing the saved workspace.",
+            "Ask the gym owner to reset the receptionist password in Settings → Staff Access.",
           );
           return;
         }
         if (!cloudAuthAvailable)
           throw new Error(
-            "Cloud account recovery is not configured for this local build. Use the local demo owner account instead.",
+            "Account recovery is temporarily unavailable because the authentication service is not configured.",
           );
         const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
           redirectTo: `${window.location.origin}/login`,
@@ -135,7 +150,7 @@ export function AccountForm() {
       }
       if (mode === "reset") {
         if (!cloudAuthAvailable)
-          throw new Error("Cloud password reset is not configured for this local build.");
+          throw new Error("Password reset is not configured for this deployment.");
         if (!recoverySession)
           throw new Error("Request a new reset link before changing your password.");
         const { error } = await supabase.auth.updateUser({ password });
@@ -154,7 +169,7 @@ export function AccountForm() {
       if (mode === "signup") {
         if (!cloudAuthAvailable)
           throw new Error(
-            "Cloud sign-up is not configured for this local build. Use the local demo owner account instead.",
+            "Account creation is unavailable because the authentication service is not configured.",
           );
         if (!name.trim() || !gym.trim()) throw new Error("Enter your name and gym name.");
         const { data, error } = await supabase.auth.signUp({
@@ -174,24 +189,10 @@ export function AccountForm() {
           );
           return;
         }
-      } else if (staff) {
-        if (
-          normalized === getState().auth.email.toLowerCase() ||
-          !(await login(normalized, password))
-        )
-          throw new Error(
-            "Unable to sign in. Check your staff credentials or ask your gym owner for help.",
-          );
-        await navigate({ to: "/", replace: true });
-        return;
       } else {
-        if (import.meta.env.DEV && (await login(normalized, password))) {
-          await navigate({ to: "/", replace: true });
-          return;
-        }
         if (!cloudAuthAvailable)
           throw new Error(
-            "Cloud sign-in is not configured for this local build. Use admin@ironvault.gym / admin123.",
+            "Authentication is not configured for this build. Connect the production authentication service before deployment.",
           );
         const { error } = await supabase.auth.signInWithPassword({ email: normalized, password });
         if (error)
@@ -201,6 +202,16 @@ export function AccountForm() {
       }
       if (!(await completeCloudLogin()))
         throw new Error("Your session could not be loaded. Please try again.");
+      const verified = getCurrentSession();
+      const expectedRole = staff ? "receptionist" : "admin";
+      if (!verified || verified.role !== expectedRole) {
+        await logoutSecurely().catch(() => undefined);
+        throw new Error(
+          staff
+            ? "This account is not an active receptionist account for a gym."
+            : "This account is a staff account. Choose Receptionist to sign in.",
+        );
+      }
       await navigate({ to: "/", replace: true });
     });
   }
@@ -331,7 +342,7 @@ export function AccountForm() {
               visible ? "text" : "password",
               "new-password",
             )}
-          {mode === "signin" && (
+          {mode === "signin" && !localDemoMode && (
             <button
               type="button"
               className="text-sm text-primary hover:underline"
@@ -378,7 +389,7 @@ export function AccountForm() {
           </Button>
         </fieldset>
       </form>
-      {mode !== "reset" && (
+      {mode !== "reset" && !localDemoMode && (
         <button
           type="button"
           disabled={busy || checking}
@@ -391,14 +402,16 @@ export function AccountForm() {
           {mode === "signin" ? "New here? Sign up" : "Already have an account? Sign in"}
         </button>
       )}
-      {mode === "signin" && staff && import.meta.env.DEV && (
+      {mode === "signin" && !cloudAuthAvailable && import.meta.env.DEV && (
         <p className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          Local demo: demo@ironvault.gym / DemoAccess#2026
-        </p>
-      )}
-      {mode === "signin" && !staff && import.meta.env.DEV && (
-        <p className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          Local owner demo: admin@ironvault.gym / admin123
+          {localDemoMode ? (
+            <>
+              Local demo mode — no Supabase connection. Email: <strong>demo@ironvault.local</strong>
+              {" "}Password: <strong>DemoGym2026!</strong>. Demo changes stay in this browser.
+            </>
+          ) : (
+            "Local development authentication is not enabled. Set up the local demo mode or configure cloud authentication."
+          )}
         </p>
       )}
       {mode === "reset" && !recoverySession && (

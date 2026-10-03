@@ -26,6 +26,13 @@ import type { Member, PaymentMethod, PhoneCountry } from "@/lib/gym/types";
 import { isWalkIn, shortDate } from "@/lib/gym/selectors";
 import { dialCodeFor, localPhoneDigits, phoneInputValue } from "@/lib/gym/phone";
 import { isLifetimePlan, membershipEndDate } from "@/lib/gym/membership";
+import { openSubscriptionPaywall } from "@/lib/billing/client";
+import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
+import {
+  dataUrlToBlob,
+  deletePrivateAsset,
+  uploadPrivateAsset,
+} from "@/lib/gym/storage";
 
 type FormState = {
   name: string;
@@ -420,7 +427,7 @@ export function MemberFormDialog({
     image.src = cropSource;
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submittingRef.current) return;
     if (!member && step === 1) {
@@ -430,22 +437,34 @@ export function MemberFormDialog({
     if (!member && !membershipStepReady) return;
     if (!validate()) return;
     submittingRef.current = true;
-    const payload = {
-      name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim(),
-      gender: form.gender,
-      dob: editingWalkIn ? (member?.dob ?? "") : new Date(form.dob).toISOString(),
-      address: form.address.trim(),
-      emergencyContact: form.emergencyContact.trim(),
-      photo: form.photo,
-    };
+    let uploadedPhotoPath: string | null = null;
     try {
+      let photo = form.photo;
+      if (photo?.startsWith("data:")) {
+        const blob = await dataUrlToBlob(photo);
+        uploadedPhotoPath = await uploadPrivateAsset("members", blob, `${form.name.trim()}-photo`);
+        photo = uploadedPhotoPath;
+      }
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        gender: form.gender,
+        dob: editingWalkIn ? (member?.dob ?? "") : new Date(form.dob).toISOString(),
+        address: form.address.trim(),
+        emergencyContact: form.emergencyContact.trim(),
+        photo,
+      };
       if (member) {
         updateMember(member.id, payload);
+        if (member.photo && member.photo !== photo) {
+          void deletePrivateAsset(member.photo).catch(() =>
+            toast.warning("Member updated, but the previous private photo could not be removed."),
+          );
+        }
         toast.success(`${payload.name} updated`);
       } else {
-        addMember({
+        const added = addMember({
           ...payload,
           planId: form.planId || undefined,
           startDate: form.startDate ? `${form.startDate}T00:00:00` : undefined,
@@ -454,9 +473,18 @@ export function MemberFormDialog({
           paidNow: Math.min(Number(form.paidNow || 0), form.planId ? finalPrice : 0),
           paymentMethod: form.paymentMethod,
         });
+        if (!added) {
+          if (uploadedPhotoPath) await deletePrivateAsset(uploadedPhotoPath).catch(() => undefined);
+          openSubscriptionPaywall("member-limit");
+          toast.info("The free plan supports up to 10 members. Activate Pro to add more.");
+          return;
+        }
         toast.success(`${payload.name} added to the roster`);
       }
       onOpenChange(false);
+    } catch (error) {
+      if (uploadedPhotoPath) await deletePrivateAsset(uploadedPhotoPath).catch(() => undefined);
+      toast.error(error instanceof Error ? error.message : "The member could not be saved.");
     } finally {
       submittingRef.current = false;
     }
@@ -523,7 +551,16 @@ export function MemberFormDialog({
                 <div className="flex items-center gap-4">
                   <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl border border-gold/30 bg-secondary text-gold">
                     {form.photo ? (
-                      <img src={form.photo} alt="Member" className="h-full w-full object-cover" />
+                      <PrivateAssetImage
+                        source={form.photo}
+                        alt="Member"
+                        className="h-full w-full object-cover"
+                        fallback={
+                          <span className="font-display text-xl">
+                            {(form.name || "?").slice(0, 2).toUpperCase()}
+                          </span>
+                        }
+                      />
                     ) : (
                       <span className="font-display text-xl">
                         {(form.name || "?").slice(0, 2).toUpperCase()}

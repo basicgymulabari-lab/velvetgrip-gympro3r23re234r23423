@@ -8,22 +8,26 @@ create table if not exists public.gym_workspaces (
 
 alter table public.gym_workspaces enable row level security;
 
+drop policy if exists "Owners can read their gym workspace" on public.gym_workspaces;
 create policy "Owners can read their gym workspace"
   on public.gym_workspaces for select
   to authenticated
   using ((select auth.uid()) = owner_id);
 
+drop policy if exists "Owners can create their gym workspace" on public.gym_workspaces;
 create policy "Owners can create their gym workspace"
   on public.gym_workspaces for insert
   to authenticated
   with check ((select auth.uid()) = owner_id);
 
+drop policy if exists "Owners can update their gym workspace" on public.gym_workspaces;
 create policy "Owners can update their gym workspace"
   on public.gym_workspaces for update
   to authenticated
   using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);
 
+drop policy if exists "Owners can delete their gym workspace" on public.gym_workspaces;
 create policy "Owners can delete their gym workspace"
   on public.gym_workspaces for delete
   to authenticated

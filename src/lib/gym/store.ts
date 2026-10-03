@@ -3,6 +3,7 @@ import { buildSeed, uid, iso } from "./seed";
 import { configureCalendarSystem } from "./calendar";
 import { phoneForCountry } from "./phone";
 import { membershipEndDate } from "./membership";
+import { addMoney, multiplyMoney, normalizeMoney, subtractMoney, sumMoney } from "./money";
 import type {
   Activity,
   ActivityType,
@@ -23,21 +24,40 @@ import type {
   ReceptionistPermissions,
   Settings,
 } from "./types";
-import { getCloudIdentity, loadCloudState, saveCloudState, signOutFromCloud } from "./cloud";
+import {
+  ensureOwnerGym,
+  getCloudGymContext,
+  getCloudIdentity,
+  loadCloudWorkspace,
+  recordCloudAuditEvent,
+  saveCloudWorkspace,
+  signOutFromCloud,
+} from "./cloud";
+import { isSupabaseConfigured } from "../../integrations/supabase/client";
+import { invokeEdgeFunction } from "../../integrations/supabase/functions";
 import { newWorkspace } from "./new-workspace";
-import { anonymizeDemoContacts } from "./demo-contacts";
-
-const DB_KEY = "ironvault.db.v1";
-const SESSION_KEY = "ironvault.session.v1";
-const RECEPTIONIST_KEY = "ironvault.receptionist.v1";
-const CLOUD_SYNC_PENDING_KEY = "ironvault.cloud-sync-pending.v1";
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+import { dataUrlToBlob, deletePrivateAsset, uploadPrivateAsset } from "./storage";
+import {
+  canAddRegularMember,
+  FREE_MEMBER_LIMIT,
+  getSubscriptionSnapshot,
+  regularMemberCount,
+} from "../billing/client";
 
 let state: GymState | null = null;
 const listeners = new Set<() => void>();
 let cloudOwnerId: string | null = null;
+let cloudGymId: string | null = null;
+let cloudRevision: number | null = null;
 let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudSaveQueue: Promise<void> = Promise.resolve();
+let cloudSyncPending = false;
 let onlineSyncInstalled = false;
+let currentSession: CurrentSession | null = null;
+const LOCAL_DEMO_SESSION_KEY = "ironvault.local-demo-session";
+const LOCAL_DEMO_STATE_KEY = "ironvault.local-demo-state";
+const localDemoEnabled = () =>
+  import.meta.env.DEV && import.meta.env.VITE_LOCAL_DEMO_MODE === "true";
 
 const isBrowser = () => typeof window !== "undefined";
 const normalizedPhone = (value: string) => {
@@ -45,101 +65,54 @@ const normalizedPhone = (value: string) => {
   return digits.length > 10 ? digits.slice(-10) : digits;
 };
 
-function receptionistFromLocalStorage(): ReceptionistAccount | null {
-  if (!isBrowser()) return null;
-  try {
-    const raw = window.localStorage.getItem(RECEPTIONIST_KEY);
-    return raw ? (JSON.parse(raw) as ReceptionistAccount) : null;
-  } catch {
+function sanitizedReceptionistAccount(value: unknown): ReceptionistAccount | null {
+  if (!value || typeof value !== "object") return null;
+  const rest = value as ReceptionistAccount;
+  if (
+    typeof rest.email !== "string" ||
+    typeof rest.passwordHash !== "string" ||
+    typeof rest.name !== "string"
+  )
     return null;
-  }
+  return rest;
 }
 
-function openAuthDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = window.indexedDB.open("ironvault-auth", 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains("accounts")) {
-        request.result.createObjectStore("accounts");
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+function sanitizedStaff(staff: GymState["staff"] | undefined): GymState["staff"] {
+  const receptionist = sanitizedReceptionistAccount(staff?.receptionist);
+  return receptionist ? { ...staff, receptionist } : {};
+}
+
+function flushCloudSave(nextState: GymState) {
+  if (!cloudOwnerId || cloudRevision === null) return cloudSaveQueue;
+  const ownerId = cloudOwnerId;
+  cloudSyncPending = true;
+  cloudSaveQueue = cloudSaveQueue.then(async () => {
+    if (cloudOwnerId !== ownerId || cloudRevision === null) return;
+    try {
+      cloudRevision = await saveCloudWorkspace(nextState, cloudRevision);
+      if (state === nextState) cloudSyncPending = false;
+    } catch (error) {
+      // Never silently overwrite a newer server revision. The pending marker
+      // remains set and the UI receives a safe sync-error event so the user can
+      // retry/reload instead of losing concurrent edits.
+      console.error("Unable to sync the gym workspace to Supabase", error);
+      window.dispatchEvent(
+        new CustomEvent("ironvault:cloud-sync-error", {
+          detail: { message: "Your latest change could not be saved. Check your connection and retry." },
+        }),
+      );
+    }
   });
-}
-
-async function persistReceptionist(account: ReceptionistAccount) {
-  if (!isBrowser()) return true;
-  try {
-    window.localStorage.setItem(RECEPTIONIST_KEY, JSON.stringify(account));
-    return true;
-  } catch {
-    // Large member photos or attachments can fill localStorage. Use IndexedDB for auth fallback.
-  }
-  if (!window.indexedDB) return false;
-  try {
-    const database = await openAuthDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction("accounts", "readwrite");
-      transaction.objectStore("accounts").put(account, "receptionist");
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error);
-    });
-    database.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function loadPersistedReceptionist(): Promise<ReceptionistAccount | null> {
-  const local = receptionistFromLocalStorage();
-  if (local) return local;
-  if (!isBrowser() || !window.indexedDB) return null;
-  try {
-    const database = await openAuthDatabase();
-    const account = await new Promise<ReceptionistAccount | null>((resolve, reject) => {
-      const request = database
-        .transaction("accounts", "readonly")
-        .objectStore("accounts")
-        .get("receptionist");
-      request.onsuccess = () =>
-        resolve((request.result as ReceptionistAccount | undefined) ?? null);
-      request.onerror = () => reject(request.error);
-    });
-    database.close();
-    return account;
-  } catch {
-    return null;
-  }
-}
-
-function persist() {
-  if (!isBrowser() || !state) return;
-  try {
-    window.localStorage.setItem(DB_KEY, JSON.stringify(state));
-  } catch {
-    /* storage full or unavailable — keep in-memory state */
-  }
+  return cloudSaveQueue;
 }
 
 function scheduleCloudSave(nextState: GymState) {
-  if (!cloudOwnerId) return;
+  if (!cloudOwnerId || cloudRevision === null) return;
   const ownerId = cloudOwnerId;
-  window.localStorage.setItem(CLOUD_SYNC_PENDING_KEY, "true");
   if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
   cloudSaveTimer = setTimeout(() => {
     if (cloudOwnerId !== ownerId) return;
-    void saveCloudState(ownerId, nextState)
-      .then(() => {
-        if (state === nextState) window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
-      })
-      .catch((error) => {
-        // The local copy remains authoritative while offline. The online event
-        // below retries the newest state instead of losing the edit.
-        console.error("Unable to sync the gym workspace to Supabase", error);
-      });
+    void flushCloudSave(nextState);
   }, 500);
 }
 
@@ -147,7 +120,7 @@ function installOnlineSync() {
   if (onlineSyncInstalled || !isBrowser() || typeof window.addEventListener !== "function") return;
   onlineSyncInstalled = true;
   window.addEventListener("online", () => {
-    if (cloudOwnerId && state && window.localStorage.getItem(CLOUD_SYNC_PENDING_KEY)) {
+    if (cloudOwnerId && state && cloudSyncPending) {
       scheduleCloudSave(state);
     }
   });
@@ -157,54 +130,23 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function init() {
-  if (state || !isBrowser()) return;
-  installOnlineSync();
-  try {
-    const raw = window.localStorage.getItem(DB_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as GymState;
-      if (parsed && parsed.version === 1) {
-        state = {
-          ...parsed,
-          expenses: (parsed.expenses ?? []).map((expense) => ({
-            ...expense,
-            // Legacy local records predate expense locking; protect them by default.
-            locked: expense.locked !== false,
-          })),
-          inquiries: parsed.inquiries ?? buildSeed().inquiries,
-          staff: {
-            ...(parsed.staff ?? {}),
-            receptionist: receptionistFromLocalStorage() ?? parsed.staff?.receptionist,
-          },
-        };
-        configureCalendarSystem(state.settings.calendarSystem);
-        state = anonymizeDemoContacts(state);
-        persist();
-        purgeOldTrash();
-        return;
-      }
-    }
-  } catch {
-    /* corrupt payload — fall through to a fresh seed */
-  }
-  state = buildSeed();
-  configureCalendarSystem(state.settings.calendarSystem);
-  persist();
-}
-
 function setState(updater: (s: GymState) => GymState) {
-  if (!state) init();
-  if (!state) return;
+  if (!state) throw new Error("Gym workspace is not loaded.");
   state = updater(state);
   configureCalendarSystem(state.settings.calendarSystem);
-  persist();
+  if (localDemoEnabled() && currentSession?.email === "demo@ironvault.local") {
+    try {
+      window.localStorage.setItem(LOCAL_DEMO_STATE_KEY, JSON.stringify(state));
+    } catch (error) {
+      console.warn("Could not save local demo workspace", error);
+    }
+  }
   scheduleCloudSave(state);
   emit();
 }
 
 function subscribe(listener: () => void) {
-  init();
+  if (isBrowser()) installOnlineSync();
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -218,84 +160,32 @@ export function useGym(): GymState | null {
 }
 
 export function getState(): GymState {
-  if (!state) init();
-  return state ?? buildSeed();
+  if (!state) throw new Error("Gym workspace is not loaded.");
+  return state;
+}
+
+/** Test-only state injection. Never call this from application code. */
+export function __setStateForLogicTests(next: GymState) {
+  if (typeof process === "undefined" || process.env.IRONVAULT_LOGIC_TESTS !== "1") {
+    throw new Error("Test state injection is disabled.");
+  }
+  state = structuredClone(next);
+  configureCalendarSystem(state.settings.calendarSystem);
+  currentSession = null;
+  cloudOwnerId = null;
+  cloudGymId = null;
+  cloudRevision = null;
+  cloudSaveQueue = Promise.resolve();
+  cloudSyncPending = false;
+  emit();
 }
 
 /* ------------------------------------------------------------------ */
 /* Auth                                                                */
 /* ------------------------------------------------------------------ */
 
-export async function sha256(text: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export async function login(email: string, password: string) {
-  let s = getState();
-  const hash = await sha256(password.trim());
-  const normalizedEmail = email.trim().toLowerCase();
-  let receptionist = s.staff?.receptionist;
-  if (
-    import.meta.env.DEV &&
-    normalizedEmail === "demo@ironvault.gym" &&
-    hash === "b6980133ea06ec01d91af7186a928fd090900442e1527372fb650bd86db245dd"
-  ) {
-    receptionist = {
-      enabled: true,
-      name: "Demo Receptionist",
-      email: normalizedEmail,
-      passwordHash: hash,
-      permissions: DEFAULT_RECEPTIONIST_PERMISSIONS,
-    };
-    setState((current) => ({
-      ...current,
-      staff: { ...current.staff, receptionist },
-    }));
-    s = getState();
-  }
-  if (!receptionist || normalizedEmail !== receptionist.email.toLowerCase()) {
-    const persisted = await loadPersistedReceptionist();
-    if (persisted) {
-      receptionist = persisted;
-      setState((current) => ({
-        ...current,
-        staff: { ...current.staff, receptionist: persisted },
-      }));
-      s = getState();
-    }
-  }
-  const isAdmin = normalizedEmail === s.auth.email.toLowerCase() && hash === s.auth.passwordHash;
-  const isReceptionist = Boolean(
-    receptionist?.enabled &&
-    normalizedEmail === receptionist.email.toLowerCase() &&
-    hash === receptionist.passwordHash,
-  );
-  if ((isAdmin || isReceptionist) && isBrowser()) {
-    const session = JSON.stringify({
-      at: Date.now(),
-      expiresAt: Date.now() + SESSION_TTL_MS,
-      email: normalizedEmail,
-      role: isReceptionist ? "receptionist" : "admin",
-    });
-    window.sessionStorage.setItem(SESSION_KEY, session);
-    window.localStorage.setItem(SESSION_KEY, session);
-    emit();
-  }
-  return isAdmin || isReceptionist;
-}
-
 export function logout() {
-  if (!isBrowser()) return;
-  cloudOwnerId = null;
-  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
-  cloudSaveTimer = null;
-  window.sessionStorage.removeItem(SESSION_KEY);
-  window.localStorage.removeItem(SESSION_KEY);
-  void signOutFromCloud().catch(() => undefined);
-  emit();
+  void logoutSecurely().catch((error) => console.error("Could not complete sign out", error));
 }
 
 // Wait for pending changes and revoke the cloud session before returning to login.
@@ -304,42 +194,52 @@ export async function logoutSecurely() {
     clearTimeout(cloudSaveTimer);
     cloudSaveTimer = null;
   }
-  if (cloudOwnerId && state) {
-    await saveCloudState(cloudOwnerId, state);
-    window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
+  if (cloudOwnerId && state && cloudRevision !== null) {
+    await flushCloudSave(state);
+    await cloudSaveQueue;
+  }
+  if (cloudOwnerId) {
+    await recordCloudAuditEvent("logout").catch(() => undefined);
   }
   await signOutFromCloud();
+  if (localDemoEnabled()) window.sessionStorage.removeItem(LOCAL_DEMO_SESSION_KEY);
+  state = null;
+  currentSession = null;
   cloudOwnerId = null;
-  window.sessionStorage.removeItem(SESSION_KEY);
-  window.localStorage.removeItem(SESSION_KEY);
+  cloudGymId = null;
+  cloudRevision = null;
+  cloudSyncPending = false;
+  cloudSaveQueue = Promise.resolve();
   emit();
 }
 
 export async function completeCloudLogin() {
-  if (!isBrowser()) return false;
+  if (!isBrowser() || !isSupabaseConfigured()) return false;
   const identity = await getCloudIdentity();
   if (!identity) return false;
   if (cloudSaveTimer) {
     clearTimeout(cloudSaveTimer);
     // Navigating between pages must not discard a pending edit before reloading.
-    if (cloudOwnerId === identity.id && state) await saveCloudState(identity.id, state);
+    if (cloudOwnerId === identity.id && state && cloudRevision !== null) {
+      await flushCloudSave(state);
+      await cloudSaveQueue;
+    }
   }
   cloudSaveTimer = null;
-  cloudOwnerId = null;
+  cloudOwnerId = identity.id;
 
-  const localSession = getCurrentSession();
-  const hasPendingLocalChanges =
-    localSession?.cloudUserId === identity.id &&
-    window.localStorage.getItem(CLOUD_SYNC_PENDING_KEY) === "true" &&
-    state?.version === 1;
-
-  if (hasPendingLocalChanges && state) {
-    await saveCloudState(identity.id, state);
-    window.localStorage.removeItem(CLOUD_SYNC_PENDING_KEY);
+  let context = await getCloudGymContext();
+  if (!context) {
+    // A confirmed user without a membership is a newly registered gym owner.
+    // Tenant id is generated server-side; the browser never supplies it.
+    const fresh = newWorkspace(identity.email, identity.name, identity.gymName);
+    context = await ensureOwnerGym(identity.gymName, fresh);
   }
+  if (!context.enabled) throw new Error("This staff account has been disabled by the gym owner.");
 
-  const cloudState = hasPendingLocalChanges ? state : await loadCloudState(identity.id);
-  if (cloudState?.version === 1) {
+  const workspace = await loadCloudWorkspace();
+  if (workspace?.state?.version === 1) {
+    const cloudState = workspace.state;
     state = {
       ...cloudState,
       expenses: (cloudState.expenses ?? []).map((expense) => ({
@@ -347,53 +247,151 @@ export async function completeCloudLogin() {
         locked: expense.locked !== false,
       })),
       inquiries: cloudState.inquiries ?? [],
-      staff: cloudState.staff ?? {},
+      staff: sanitizedStaff(cloudState.staff),
     };
+    cloudRevision = workspace.revision;
+    cloudGymId = workspace.gymId;
     configureCalendarSystem(state.settings.calendarSystem);
-    persist();
+
+    // One-time migration for legacy inline photos/receipts. Persisted cloud
+    // workspaces must reference private Storage objects instead of embedding
+    // member PII/documents as base64 JSON.
+    if (context.role === "owner") {
+      const uploadedPaths: string[] = [];
+      let migrated = false;
+      try {
+        const members: Member[] = [];
+        for (const member of state.members) {
+          if (member.photo?.startsWith("data:")) {
+            const path = await uploadPrivateAsset(
+              "members",
+              await dataUrlToBlob(member.photo),
+              `${member.name}-photo`,
+            );
+            uploadedPaths.push(path);
+            members.push({ ...member, photo: path });
+            migrated = true;
+          } else {
+            members.push(member);
+          }
+        }
+
+        const expenses: Expense[] = [];
+        for (const expense of state.expenses ?? []) {
+          const attachment = expense.attachment;
+          if (attachment?.path && attachment.dataUrl) {
+            const { dataUrl: _legacyDataUrl, ...persistedAttachment } = attachment;
+            expenses.push({ ...expense, attachment: persistedAttachment });
+            migrated = true;
+          } else if (attachment?.dataUrl?.startsWith("data:")) {
+            const path = await uploadPrivateAsset(
+              "expenses",
+              await dataUrlToBlob(attachment.dataUrl),
+              attachment.name,
+            );
+            uploadedPaths.push(path);
+            expenses.push({
+              ...expense,
+              attachment: {
+                name: attachment.name,
+                type: attachment.type,
+                size: attachment.size,
+                path,
+              },
+            });
+            migrated = true;
+          } else {
+            expenses.push(expense);
+          }
+        }
+
+        if (migrated) {
+          state = { ...state, members, expenses };
+          cloudRevision = await saveCloudWorkspace(state, cloudRevision);
+        }
+      } catch (error) {
+        await Promise.all(uploadedPaths.map((path) => deletePrivateAsset(path).catch(() => undefined)));
+        throw new Error(
+          error instanceof Error
+            ? `Private file migration failed: ${error.message}`
+            : "Private file migration failed.",
+        );
+      }
+    }
   } else {
-    const fresh = newWorkspace(identity.email, identity.name, identity.gymName);
-    // Insert only: a concurrent first login must never overwrite an existing workspace.
-    const { supabase } = await import("../../integrations/supabase/client");
-    const { error } = await supabase
-      .from("gym_workspaces")
-      .insert({ owner_id: identity.id, state: fresh });
-    if (error && error.code !== "23505") throw error;
-    state = error ? await loadCloudState(identity.id) : fresh;
-    if (!state) throw new Error("Workspace could not be created.");
-    configureCalendarSystem(state.settings.calendarSystem);
-    persist();
+    throw new Error("Your gym workspace could not be loaded.");
   }
 
-  cloudOwnerId = identity.id;
-  state = anonymizeDemoContacts(getState());
-  persist();
-  const session = JSON.stringify({
-    at: Date.now(),
-    expiresAt: Date.now() + SESSION_TTL_MS,
+  cloudSyncPending = false;
+  const role = context.role === "owner" ? "admin" : "receptionist";
+  const permissions =
+    role === "receptionist"
+      ? { ...DEFAULT_RECEPTIONIST_PERMISSIONS, ...context.permissions }
+      : undefined;
+  currentSession = {
     email: identity.email.toLowerCase(),
-    role: "admin",
+    role,
     cloudUserId: identity.id,
-  });
-  window.sessionStorage.setItem(SESSION_KEY, session);
-  window.localStorage.setItem(SESSION_KEY, session);
+    gymId: context.gymId,
+    name: context.displayName || (role === "admin" ? identity.name : "Receptionist"),
+    permissions,
+  };
+  await recordCloudAuditEvent("login").catch(() => undefined);
   emit();
   return true;
 }
 
+/** Start the isolated, seeded local demo account. It is available only in explicitly enabled dev mode. */
+export function startLocalDemoSession() {
+  if (!localDemoEnabled()) throw new Error("Local demo sign-in is disabled.");
+  let demoState: GymState | null = null;
+  try {
+    const saved = window.localStorage.getItem(LOCAL_DEMO_STATE_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (parsed && typeof parsed === "object" && (parsed as GymState).version === 1) {
+        demoState = parsed as GymState;
+      }
+    }
+  } catch {
+    demoState = null;
+  }
+  state = demoState ?? buildSeed();
+  state = {
+    ...state,
+    settings: { ...state.settings, gymName: "IronVault Demo Gym", adminName: "Demo Owner", email: "demo@ironvault.local" },
+  };
+  window.localStorage.setItem(LOCAL_DEMO_STATE_KEY, JSON.stringify(state));
+  window.sessionStorage.setItem(LOCAL_DEMO_SESSION_KEY, "true");
+  currentSession = { email: "demo@ironvault.local", role: "admin", name: "Demo Owner" };
+  cloudOwnerId = null;
+  cloudGymId = null;
+  cloudRevision = null;
+  configureCalendarSystem(state.settings.calendarSystem);
+  emit();
+}
+
 export function isLoggedIn() {
-  return getCurrentSession() !== null;
+  return currentSession !== null;
 }
 
 export async function validateCurrentSession() {
-  const session = getCurrentSession();
-  if (!session) return false;
-  if (session.role === "receptionist") return true;
-  if (import.meta.env.DEV && session.email === getState().auth.email.toLowerCase()) return true;
-  // A previously verified owner can keep working during a connection outage.
-  // The normal cloud verification resumes as soon as the device is online.
-  if (!window.navigator.onLine && session.cloudUserId) return true;
-  // A browser session marker alone is not proof of an authenticated owner.
+  if (!isBrowser()) return false;
+  if (localDemoEnabled()) {
+    if (window.sessionStorage.getItem(LOCAL_DEMO_SESSION_KEY) !== "true") return false;
+    if (currentSession?.email === "demo@ironvault.local" && state) return true;
+    startLocalDemoSession();
+    return true;
+  }
+  if (!isSupabaseConfigured()) return false;
+  if (!window.navigator.onLine && currentSession) {
+    return Boolean(
+      state &&
+        cloudRevision !== null &&
+        cloudOwnerId === currentSession.cloudUserId &&
+        cloudGymId === currentSession.gymId,
+    );
+  }
   return completeCloudLogin();
 }
 
@@ -402,6 +400,7 @@ export type CurrentSession = {
   role: "admin" | "receptionist";
   name: string;
   cloudUserId?: string;
+  gymId?: string;
   permissions?: ReceptionistPermissions;
 };
 
@@ -421,48 +420,7 @@ export const DEFAULT_RECEPTIONIST_PERMISSIONS: ReceptionistPermissions = {
 };
 
 export function getCurrentSession(): CurrentSession | null {
-  if (!isBrowser()) return null;
-  const raw =
-    window.sessionStorage.getItem(SESSION_KEY) || window.localStorage.getItem(SESSION_KEY);
-  if (!raw) return null;
-  try {
-    const session = JSON.parse(raw) as {
-      at?: unknown;
-      expiresAt?: unknown;
-      email?: unknown;
-      role?: unknown;
-      cloudUserId?: unknown;
-    };
-    const at = typeof session.at === "number" ? session.at : 0;
-    const expiresAt =
-      typeof session.expiresAt === "number" ? session.expiresAt : at + SESSION_TTL_MS;
-    const s = getState();
-    const email = typeof session.email === "string" ? session.email.toLowerCase() : "";
-    const receptionist = s.staff?.receptionist;
-    const role = session.role === "receptionist" ? "receptionist" : "admin";
-    const cloudUserId = typeof session.cloudUserId === "string" ? session.cloudUserId : "";
-    const identityValid =
-      role === "admin"
-        ? Boolean(cloudUserId) || email === s.auth.email.toLowerCase()
-        : Boolean(receptionist?.enabled && email === receptionist.email.toLowerCase());
-    if (identityValid && at > 0 && expiresAt > Date.now()) {
-      if (cloudUserId) cloudOwnerId = cloudUserId;
-      return {
-        email,
-        role,
-        name: role === "admin" ? s.settings.adminName : receptionist?.name || "Receptionist",
-        cloudUserId: cloudUserId || undefined,
-        permissions:
-          role === "receptionist"
-            ? { ...DEFAULT_RECEPTIONIST_PERMISSIONS, ...receptionist?.permissions }
-            : undefined,
-      };
-    }
-  } catch {
-    // Invalid or tampered session payloads are removed below.
-  }
-  logout();
-  return null;
+  return currentSession;
 }
 
 export async function saveReceptionistAccount(input: {
@@ -473,50 +431,27 @@ export async function saveReceptionistAccount(input: {
   password?: string;
   permissions: ReceptionistPermissions;
 }) {
-  const current = getState();
-  const currentReceptionist = current.staff?.receptionist;
-  const normalizedPassword = input.password?.trim() ?? "";
-  if (!currentReceptionist && normalizedPassword.length < 8) return false;
-
-  let passwordHash = currentReceptionist?.passwordHash ?? "";
-  if (normalizedPassword) {
-    if (normalizedPassword.length < 8) return false;
-    passwordHash = await sha256(normalizedPassword);
-    if (passwordHash === current.auth.passwordHash) return false;
-  }
-  if (!passwordHash) return false;
-
+  const currentSession = getCurrentSession();
+  if (!isSupabaseConfigured() || currentSession?.role !== "admin" || !currentSession.cloudUserId)
+    return false;
+  const body = await invokeEdgeFunction<{
+    account?: {
+      enabled?: boolean;
+      name?: string;
+      email?: string;
+      permissions?: ReceptionistPermissions;
+    };
+  }>("staff-receptionist", { body: input as unknown as Record<string, unknown> });
+  if (!body.account?.email || !body.account.name) return false;
   const account: ReceptionistAccount = {
-    enabled: input.enabled,
-    name: input.name.trim(),
-    email: input.email.trim().toLowerCase(),
-    passwordHash,
-    passwordCopy: normalizedPassword || currentReceptionist?.passwordCopy,
-    permissions: input.permissions,
+    enabled: body.account.enabled !== false,
+    name: body.account.name,
+    email: body.account.email,
+    passwordHash: "cloud-managed",
+    permissions: body.account.permissions ?? input.permissions,
   };
-  if (!(await persistReceptionist(account))) return false;
-  setState((st) => ({ ...st, staff: { ...st.staff, receptionist: account } }));
-  return true;
-}
-
-export async function receptionistLoginIssue(email: string) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const receptionist = getState().staff?.receptionist ?? (await loadPersistedReceptionist());
-  if (!receptionist || normalizedEmail !== receptionist.email.toLowerCase()) {
-    return "No receptionist account exists for this email. Ask the administrator to create and save it in Settings.";
-  }
-  if (!receptionist.enabled) {
-    return "This receptionist account is disabled. Ask the administrator to enable it in Settings.";
-  }
-  return "The password is incorrect. Ask the administrator to reset the receptionist password in Settings.";
-}
-
-export async function changePassword(current: string, next: string) {
-  const s = getState();
-  if ((await sha256(current)) !== s.auth.passwordHash) return false;
-  const hash = await sha256(next);
-  if (hash === s.staff?.receptionist?.passwordHash) return false;
-  setState((st) => ({ ...st, auth: { ...st.auth, passwordHash: hash } }));
+  state = { ...getState(), staff: { receptionist: account } };
+  emit();
   return true;
 }
 
@@ -533,6 +468,18 @@ function log(st: GymState, type: ActivityType, title: string, description: strin
     date: iso(new Date()),
   };
   return { ...st, activities: [activity, ...st.activities].slice(0, 300) };
+}
+
+function auditCloud(
+  action: string,
+  entityType?: string,
+  entityId?: string,
+  metadata: Record<string, string | number | boolean | null> = {},
+) {
+  if (!cloudOwnerId) return;
+  void recordCloudAuditEvent(action, entityType, entityId, metadata).catch((error) => {
+    console.error("Could not record audit event", error);
+  });
 }
 
 function nextInvoice(st: GymState): [GymState, string] {
@@ -568,8 +515,12 @@ export type NewMemberInput = Omit<
 };
 
 export function addMember(input: NewMemberInput) {
+  if (!canAddRegularMember(getState())) return false;
+  let created = false;
+  let createdId = "";
   setState((st) => {
     const id = uid("mem");
+    createdId = id;
     const member: Member = {
       id,
       type: "member",
@@ -588,6 +539,7 @@ export function addMember(input: NewMemberInput) {
       deletedBy: null,
     };
     let next: GymState = { ...st, members: [member, ...st.members] };
+    created = true;
     next = log(next, "member_added", "New member registered", `${member.name} joined the gym`);
 
     if (input.planId) {
@@ -601,15 +553,18 @@ export function addMember(input: NewMemberInput) {
           planId: plan.id,
           startDate: iso(start),
           endDate: iso(end),
-          price: plan.price,
-          discount: Math.min(Math.max(0, Math.round(input.discount ?? 0)), plan.price),
-          joiningFee: Math.max(0, Math.round(input.joiningFee ?? plan.joiningFee ?? 1000)),
+          price: normalizeMoney(plan.price),
+          discount: Math.min(Math.max(0, normalizeMoney(input.discount ?? 0)), normalizeMoney(plan.price)),
+          joiningFee: Math.max(0, normalizeMoney(input.joiningFee ?? plan.joiningFee ?? 1000)),
           frozen: false,
           createdAt: iso(new Date()),
         };
         next = { ...next, memberships: [membership, ...next.memberships] };
-        const payable = membership.price - membership.discount + (membership.joiningFee ?? 0);
-        const paidNow = Math.min(Math.max(0, Math.round(input.paidNow ?? 0)), payable);
+        const payable = addMoney(
+          subtractMoney(membership.price, membership.discount),
+          membership.joiningFee ?? 0,
+        );
+        const paidNow = Math.min(Math.max(0, normalizeMoney(input.paidNow ?? 0)), payable);
         if (paidNow > 0) {
           const [withSeq, invoiceNo] = nextInvoice(next);
           const payment: Payment = {
@@ -641,6 +596,8 @@ export function addMember(input: NewMemberInput) {
     }
     return next;
   });
+  if (created && createdId) auditCloud("member_created", "member", createdId);
+  return created;
 }
 
 export function updateMember(id: string, patch: Partial<Member>) {
@@ -671,6 +628,7 @@ export function updateMember(id: string, patch: Partial<Member>) {
       ),
     };
   });
+  auditCloud("member_updated", "member", id);
 }
 
 export function trashMember(id: string, by: string) {
@@ -689,9 +647,21 @@ export function trashMember(id: string, by: string) {
       `${member?.name ?? "Member"} moved to trash`,
     );
   });
+  auditCloud("member_deleted", "member", id, { soft_delete: true });
 }
 
 export function restoreMember(id: string) {
+  const current = getState();
+  const memberToRestore = current.members.find((member) => member.id === id);
+  const isRegular =
+    memberToRestore && (memberToRestore.type === undefined || memberToRestore.type === "member");
+  if (
+    isRegular &&
+    regularMemberCount(current) >= FREE_MEMBER_LIMIT &&
+    !getSubscriptionSnapshot().active
+  ) {
+    return false;
+  }
   setState((st) => {
     const member = st.members.find((m) => m.id === id);
     const next = {
@@ -707,6 +677,7 @@ export function restoreMember(id: string) {
       `${member?.name ?? "Member"} restored from trash`,
     );
   });
+  return true;
 }
 
 export function deleteMemberPermanently(id: string) {
@@ -733,63 +704,7 @@ export function deleteMemberPermanently(id: string) {
       `${member?.name ?? "Member"} was permanently removed`,
     );
   });
-}
-
-function purgeOldTrash() {
-  if (!state) return;
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const expired = state.members.filter(
-    (m) => m.deletedAt && new Date(m.deletedAt).getTime() < cutoff,
-  );
-  if (expired.length === 0) {
-    purgeOldTrashedPlans();
-    return;
-  }
-  const ids = new Set(expired.map((m) => m.id));
-  const membershipIds = new Set(
-    state.memberships.filter((m) => ids.has(m.memberId)).map((m) => m.id),
-  );
-  const saleIds = new Set(
-    state.sales.filter((sale) => ids.has(sale.memberId ?? "")).map((sale) => sale.id),
-  );
-  state = {
-    ...state,
-    members: state.members.filter((m) => !ids.has(m.id)),
-    memberships: state.memberships.filter((m) => !ids.has(m.memberId)),
-    payments: state.payments.filter(
-      (payment) =>
-        !ids.has(payment.memberId ?? "") &&
-        !membershipIds.has(payment.membershipId ?? "") &&
-        !saleIds.has(payment.saleId ?? ""),
-    ),
-    sales: state.sales.filter((sale) => !ids.has(sale.memberId ?? "")),
-  };
-  purgeOldTrashedPlans();
-  persist();
-}
-
-function purgeOldTrashedPlans() {
-  if (!state) return;
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const referencedPlanIds = new Set(state.memberships.map((membership) => membership.planId));
-  const keep = state.plans.filter(
-    (p) =>
-      referencedPlanIds.has(p.id) || !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
-  );
-  const keepProducts = state.products.filter(
-    (p) => !(p.deletedAt && new Date(p.deletedAt).getTime() < cutoff),
-  );
-  const keepExpenses = (state.expenses ?? []).filter(
-    (e) => !(e.deletedAt && new Date(e.deletedAt).getTime() < cutoff),
-  );
-  if (
-    keep.length === state.plans.length &&
-    keepProducts.length === state.products.length &&
-    keepExpenses.length === (state.expenses ?? []).length
-  )
-    return;
-  state = { ...state, plans: keep, products: keepProducts, expenses: keepExpenses };
-  persist();
+  auditCloud("member_deleted", "member", id, { permanent: true });
 }
 
 export function addNote(memberId: string, title: string, note: string) {
@@ -883,10 +798,20 @@ export function deleteMeasurement(memberId: string, measurementId: string) {
 /* ------------------------------------------------------------------ */
 
 export function savePlan(plan: Omit<Plan, "id"> & { id?: string }) {
+  const normalizedPlan = {
+    ...plan,
+    price: normalizeMoney(plan.price),
+    joiningFee: normalizeMoney(plan.joiningFee ?? 0),
+  };
   setState((st) =>
-    plan.id
-      ? { ...st, plans: st.plans.map((p) => (p.id === plan.id ? ({ ...p, ...plan } as Plan) : p)) }
-      : { ...st, plans: [...st.plans, { ...plan, id: uid("plan") } as Plan] },
+    normalizedPlan.id
+      ? {
+          ...st,
+          plans: st.plans.map((p) =>
+            p.id === normalizedPlan.id ? ({ ...p, ...normalizedPlan } as Plan) : p,
+          ),
+        }
+      : { ...st, plans: [...st.plans, { ...normalizedPlan, id: uid("plan") } as Plan] },
   );
 }
 
@@ -924,6 +849,7 @@ export function renewMembership(
   discount = 0,
   paymentMethod: Payment["method"] = "cash",
 ) {
+  let renewedMembershipId = "";
   setState((st) => {
     const plan = st.plans.find((p) => p.id === planId);
     const member = st.members.find((m) => m.id === memberId);
@@ -940,14 +866,18 @@ export function renewMembership(
       planId,
       startDate: iso(base),
       endDate: iso(end),
-      price: plan.price,
-      discount: Math.min(Math.max(0, Math.round(discount)), plan.price),
+      price: normalizeMoney(plan.price),
+      discount: Math.min(Math.max(0, normalizeMoney(discount)), normalizeMoney(plan.price)),
       joiningFee: 0,
       frozen: false,
       createdAt: iso(new Date()),
     };
-    const payable = membership.price - membership.discount + (membership.joiningFee ?? 0);
-    const collected = Math.min(Math.max(0, Math.round(paidNow)), payable);
+    renewedMembershipId = membership.id;
+    const payable = addMoney(
+      subtractMoney(membership.price, membership.discount),
+      membership.joiningFee ?? 0,
+    );
+    const collected = Math.min(Math.max(0, normalizeMoney(paidNow)), payable);
     let next: GymState = { ...st, memberships: [membership, ...st.memberships] };
     next = log(
       next,
@@ -983,6 +913,8 @@ export function renewMembership(
     }
     return next;
   });
+  if (renewedMembershipId)
+    auditCloud("membership_renewed", "membership", renewedMembershipId, { member_id: memberId });
 }
 
 export function toggleFreeze(membershipId: string) {
@@ -1020,17 +952,22 @@ export function addPayment(input: {
         (item) => item.id === input.membershipId && item.memberId === input.memberId,
       )
     : undefined;
-  const amount = Math.round(input.amount);
+  const amount = normalizeMoney(input.amount);
   if (!member || !membership || !Number.isFinite(amount) || amount <= 0) return false;
-  const alreadyPaid = state.payments
-    .filter((payment) => payment.membershipId === membership.id)
-    .reduce((sum, payment) => sum + payment.amount, 0);
+  const alreadyPaid = sumMoney(
+    state.payments.filter((payment) => payment.membershipId === membership.id),
+    (payment) => payment.amount,
+  );
   const remaining = Math.max(
     0,
-    membership.price - membership.discount + (membership.joiningFee ?? 0) - alreadyPaid,
+    subtractMoney(
+      addMoney(subtractMoney(membership.price, membership.discount), membership.joiningFee ?? 0),
+      alreadyPaid,
+    ),
   );
   if (amount > remaining) return false;
 
+  let paymentId = "";
   setState((st) => {
     const [withSeq, invoiceNo] = nextInvoice(st);
     const payment: Payment = {
@@ -1044,6 +981,7 @@ export function addPayment(input: {
       date: input.date ?? iso(new Date()),
       note: input.note ?? "Manual payment entry",
     };
+    paymentId = payment.id;
     let next: GymState = { ...withSeq, payments: [payment, ...withSeq.payments] };
     next = log(
       next,
@@ -1059,6 +997,11 @@ export function addPayment(input: {
     );
     return next;
   });
+  if (paymentId)
+    auditCloud("payment_created", "payment", paymentId, {
+      member_id: input.memberId,
+      amount,
+    });
   return true;
 }
 
@@ -1070,15 +1013,17 @@ export function addSalePayment(
 ) {
   const state = getState();
   const sale = state.sales.find((item) => item.id === saleId);
-  const amount = Math.round(amountInput);
+  const amount = normalizeMoney(amountInput);
   if (!sale || !Number.isFinite(amount) || amount <= 0) return false;
 
-  const alreadyPaid = state.payments
-    .filter((payment) => payment.saleId === sale.id)
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const remaining = Math.max(0, sale.total - alreadyPaid);
+  const alreadyPaid = sumMoney(
+    state.payments.filter((payment) => payment.saleId === sale.id),
+    (payment) => payment.amount,
+  );
+  const remaining = Math.max(0, subtractMoney(sale.total, alreadyPaid));
   if (amount > remaining) return false;
 
+  let paymentId = "";
   setState((st) => {
     const payment: Payment = {
       id: uid("pay"),
@@ -1091,6 +1036,7 @@ export function addSalePayment(
       date: iso(new Date()),
       note: note?.trim() || `${sale.productName} — balance payment`,
     };
+    paymentId = payment.id;
     let next: GymState = { ...st, payments: [payment, ...st.payments] };
     next = log(
       next,
@@ -1100,6 +1046,7 @@ export function addSalePayment(
     );
     return next;
   });
+  if (paymentId) auditCloud("payment_created", "payment", paymentId, { sale_id: sale.id, amount });
   return true;
 }
 
@@ -1108,16 +1055,27 @@ export function addSalePayment(
 /* ------------------------------------------------------------------ */
 
 export function saveProduct(product: Omit<Product, "id" | "createdAt"> & { id?: string }) {
+  const normalizedProduct = {
+    ...product,
+    cost: normalizeMoney(product.cost),
+    price: normalizeMoney(product.price),
+    stock: Math.max(0, Math.trunc(product.stock)),
+    lowStockAt: Math.max(0, Math.trunc(product.lowStockAt)),
+  };
   setState((st) => {
-    if (product.id) {
+    if (normalizedProduct.id) {
       return {
         ...st,
         products: st.products.map((p) =>
-          p.id === product.id ? ({ ...p, ...product } as Product) : p,
+          p.id === normalizedProduct.id ? ({ ...p, ...normalizedProduct } as Product) : p,
         ),
       };
     }
-    const created: Product = { ...product, id: uid("prd"), createdAt: iso(new Date()) } as Product;
+    const created: Product = {
+      ...normalizedProduct,
+      id: uid("prd"),
+      createdAt: iso(new Date()),
+    } as Product;
     const next = { ...st, products: [created, ...st.products] };
     return log(next, "product_added", "Product added", `${created.name} added to inventory`);
   });
@@ -1171,13 +1129,14 @@ export function sellProduct(
     paymentMethod?: PaymentMethod;
   },
 ) {
+  let completedSaleId = "";
   setState((st) => {
     const product = st.products.find((p) => p.id === productId);
     if (!product || qty <= 0 || !Number.isInteger(qty) || product.stock < qty) return st;
-    const gross = product.price * qty;
-    const discount = Math.min(Math.max(0, Math.round(extra?.discount ?? 0)), gross);
-    const total = gross - discount;
-    const paid = Math.min(Math.max(0, Math.round(extra?.amountPaid ?? total)), total);
+    const gross = multiplyMoney(product.price, qty);
+    const discount = Math.min(Math.max(0, normalizeMoney(extra?.discount ?? 0)), gross);
+    const total = subtractMoney(gross, discount);
+    const paid = Math.min(Math.max(0, normalizeMoney(extra?.amountPaid ?? total)), total);
     const buyerPhone = phoneForCountry(extra?.buyerPhone, st.settings.phoneCountry) || undefined;
     let saleMemberId = memberId ?? null;
     let saleBuyer = buyer || "Walk-in customer";
@@ -1250,6 +1209,7 @@ export function sellProduct(
       memberId: saleMemberId,
       date: iso(new Date()),
     };
+    completedSaleId = sale.id;
     let next: GymState = {
       ...withSeq,
       sales: [sale, ...withSeq.sales],
@@ -1288,6 +1248,8 @@ export function sellProduct(
     );
     return next;
   });
+  if (completedSaleId)
+    auditCloud("product_sold", "sale", completedSaleId, { product_id: productId, quantity: qty });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1328,6 +1290,9 @@ export function updateSettings(patch: Partial<Settings>) {
         : (st.inquiries ?? []),
     };
   });
+  auditCloud("settings_updated", "settings", cloudGymId ?? "gym", {
+    fields: Object.keys(patch).join(","),
+  });
 }
 
 export function markNotificationsRead(ids: string[]) {
@@ -1338,7 +1303,8 @@ export function markNotificationsRead(ids: string[]) {
 }
 
 export function exportBackup() {
-  return JSON.stringify(getState(), null, 2);
+  const current = getState();
+  return JSON.stringify({ ...current, staff: sanitizedStaff(current.staff) }, null, 2);
 }
 
 export function restoreBackup(json: string) {
@@ -1388,7 +1354,20 @@ export function restoreBackup(json: string) {
     expenses.every((expense) => Number.isFinite(expense.amount) && expense.amount > 0);
   if (!valid) throw new Error("Backup contains broken record references");
 
-  setState(() => ({ ...parsed, expenses, inquiries, version: 1 }));
+  if (regularMemberCount(parsed) > FREE_MEMBER_LIMIT && !getSubscriptionSnapshot().active) {
+    throw new Error(
+      `This backup contains more than ${FREE_MEMBER_LIMIT} active gym members. Activate Pro before restoring it.`,
+    );
+  }
+
+  setState(() => ({
+    ...parsed,
+    expenses,
+    inquiries,
+    staff: sanitizedStaff(parsed.staff),
+    version: 1,
+  }));
+  auditCloud("backup_restored", "workspace", cloudGymId ?? "gym");
 }
 
 export function resetData() {
@@ -1409,14 +1388,18 @@ export function resetData() {
 }
 
 export function setupTemplateData() {
+  const template = buildSeed();
+  if (regularMemberCount(template) > FREE_MEMBER_LIMIT && !getSubscriptionSnapshot().active) {
+    return false;
+  }
   setState((st) => {
-    const template = buildSeed();
     return {
       ...template,
       auth: st.auth,
       settings: st.settings,
     };
   });
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1488,6 +1471,7 @@ export function updateInquiry(id: string, patch: Partial<InquiryInput>) {
       `${updated.name} moved to ${updated.status.replace("_", " ")}`,
     );
   });
+  auditCloud("inquiry_updated", "inquiry", id);
 }
 
 export function deleteInquiry(id: string) {
@@ -1527,6 +1511,7 @@ function nextExpenseNo(list: Expense[]) {
 }
 
 export function addExpense(input: ExpenseInput) {
+  let expenseId = "";
   setState((st) => {
     const list = st.expenses ?? [];
     const expense: Expense = {
@@ -1534,7 +1519,7 @@ export function addExpense(input: ExpenseInput) {
       expenseNo: nextExpenseNo(list),
       title: input.title.trim(),
       category: input.category,
-      amount: Math.max(0, Math.round(input.amount)),
+      amount: Math.max(0, normalizeMoney(input.amount)),
       date: input.date,
       method: input.method,
       notes: input.notes?.trim() ?? "",
@@ -1544,6 +1529,7 @@ export function addExpense(input: ExpenseInput) {
       locked: true,
       deletedAt: null,
     };
+    expenseId = expense.id;
     const next: GymState = { ...st, expenses: [expense, ...list] };
     return log(
       next,
@@ -1552,6 +1538,8 @@ export function addExpense(input: ExpenseInput) {
       `${expense.title} — ₹${expense.amount.toLocaleString("en-IN")}`,
     );
   });
+  if (expenseId)
+    auditCloud("expense_created", "expense", expenseId, { amount: Math.max(0, Math.round(input.amount)) });
 }
 
 export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
@@ -1564,7 +1552,7 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
               ...e,
               ...patch,
               title: patch.title !== undefined ? patch.title.trim() : e.title,
-              amount: patch.amount !== undefined ? Math.max(0, Math.round(patch.amount)) : e.amount,
+              amount: patch.amount !== undefined ? Math.max(0, normalizeMoney(patch.amount)) : e.amount,
               notes: patch.notes !== undefined ? patch.notes.trim() : e.notes,
               attachment: patch.attachment !== undefined ? patch.attachment : e.attachment,
             }
@@ -1579,6 +1567,7 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
       `${updated?.title ?? "Expense"} — ₹${(updated?.amount ?? 0).toLocaleString("en-IN")}`,
     );
   });
+  auditCloud("expense_updated", "expense", id);
 }
 
 export function trashExpense(id: string) {

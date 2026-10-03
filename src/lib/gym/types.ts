@@ -135,7 +135,10 @@ export type ExpenseAttachment = {
   name: string;
   type: string;
   size: number;
-  dataUrl: string;
+  /** Private Supabase Storage object path for persisted attachments. */
+  path?: string;
+  /** Temporary/legacy inline source. New cloud records store `path` instead. */
+  dataUrl?: string;
 };
 
 export type Expense = {
@@ -239,12 +242,6 @@ export type ReceptionistAccount = {
   name: string;
   email: string;
   passwordHash: string;
-  /**
-   * Owner-only local copy used by Staff Access so the owner can copy the
-   * receptionist login password after later permission-only saves.
-   * Legacy accounts may not have this until the password is changed once.
-   */
-  passwordCopy?: string;
   permissions?: ReceptionistPermissions;
 };
 

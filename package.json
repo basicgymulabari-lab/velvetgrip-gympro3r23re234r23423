@@ -7,13 +7,21 @@
     "dev": "vite dev",
     "dev:desktop": "vite --config vite.tauri.config.ts",
     "build": "vite build",
+    "deploy:cloudflare": "wrangler deploy --config wrangler.jsonc",
     "build:desktop": "vite build --config vite.tauri.config.ts",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test:logic": "node scripts/verify-business-logic.mjs",
+    "test:cloud-smoke": "node scripts/verify-cloud-smoke.mjs",
+    "test:db": "npx supabase test db",
+    "test:db:linked": "npx supabase db query --linked --file supabase/tests/tenant_isolation_assert.sql",
+    "test:all": "npm run typecheck && npm run lint && npm run test:logic && npm run build",
+    "audit:deps": "npm audit --audit-level=high",
+    "billing:codes": "node scripts/generate-recharge-codes.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {
@@ -77,6 +85,7 @@
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "2.8.5",
+    "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
@@ -92,6 +101,7 @@
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "wrangler": "^4.147.0"
   }
 }

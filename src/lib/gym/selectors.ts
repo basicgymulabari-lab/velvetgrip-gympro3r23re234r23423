@@ -1,5 +1,6 @@
 import type { GymState, Member, MemberStatus, Membership, Payment, Product, Sale } from "./types";
 import { formatCompactDate, formatDayMonth, formatMonth, formatShortDate } from "./calendar";
+import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "./money";
 
 export const DAY = 24 * 60 * 60 * 1000;
 
@@ -65,37 +66,43 @@ export function statusOf(s: GymState, memberId: string): MemberStatus {
 }
 
 export function paidFor(s: GymState, membershipId: string) {
-  return s.payments
-    .filter((p) => p.membershipId === membershipId)
-    .reduce((sum, p) => sum + p.amount, 0);
+  return sumMoney(
+    s.payments.filter((p) => p.membershipId === membershipId),
+    (payment) => payment.amount,
+  );
 }
 
 export function membershipPayable(membership: Membership) {
-  return membership.price - membership.discount + (membership.joiningFee ?? 0);
+  return addMoney(
+    subtractMoney(membership.price, membership.discount),
+    membership.joiningFee ?? 0,
+  );
 }
 
 export function dueFor(s: GymState, memberId: string) {
-  return s.memberships
-    .filter((m) => m.memberId === memberId)
-    .reduce((sum, m) => sum + Math.max(0, membershipPayable(m) - paidFor(s, m.id)), 0);
+  return sumMoney(
+    s.memberships.filter((m) => m.memberId === memberId),
+    (membership) => Math.max(0, subtractMoney(membershipPayable(membership), paidFor(s, membership.id))),
+  );
 }
 
 export function productDueFor(s: GymState, memberId: string) {
-  return salesFor(s, memberId).reduce((sum, sale) => sum + saleDue(s, sale), 0);
+  return sumMoney(salesFor(s, memberId), (sale) => saleDue(s, sale));
 }
 
 export function outstandingFor(s: GymState, memberId: string) {
-  return dueFor(s, memberId) + productDueFor(s, memberId);
+  return addMoney(dueFor(s, memberId), productDueFor(s, memberId));
 }
 
 export function totalDue(s: GymState) {
-  return activeMembers(s).reduce((sum, m) => sum + outstandingFor(s, m.id), 0);
+  return sumMoney(activeMembers(s), (member) => outstandingFor(s, member.id));
 }
 
 export function totalRevenue(s: GymState, from?: Date) {
-  return s.payments
-    .filter((p) => (from ? new Date(p.date) >= from : true))
-    .reduce((sum, p) => sum + p.amount, 0);
+  return sumMoney(
+    s.payments.filter((p) => (from ? new Date(p.date) >= from : true)),
+    (payment) => payment.amount,
+  );
 }
 
 export const liveProducts = (s: GymState) => s.products.filter((p) => !p.deletedAt);
@@ -108,11 +115,14 @@ export function lowStock(s: GymState): Product[] {
 /** Amount collected against a product sale. Legacy sales were always fully paid. */
 export function salePaid(s: GymState, sale: Sale) {
   if (typeof sale.paid !== "number") return sale.total;
-  return s.payments.filter((p) => p.saleId === sale.id).reduce((sum, p) => sum + p.amount, 0);
+  return sumMoney(
+    s.payments.filter((p) => p.saleId === sale.id),
+    (payment) => payment.amount,
+  );
 }
 
 export function saleDue(s: GymState, sale: Sale) {
-  return Math.max(0, sale.total - salePaid(s, sale));
+  return Math.max(0, subtractMoney(sale.total, salePaid(s, sale)));
 }
 
 export const salesFor = (s: GymState, memberId: string) =>
@@ -121,9 +131,10 @@ export const salesFor = (s: GymState, memberId: string) =>
 export const pendingSales = (s: GymState) => s.sales.filter((x) => saleDue(s, x) > 0);
 
 export function profitOfSales(s: GymState, from?: Date) {
-  return s.sales
-    .filter((x) => (from ? new Date(x.date) >= from : true))
-    .reduce((sum, x) => sum + x.total - x.unitCost * x.qty, 0);
+  return sumMoney(
+    s.sales.filter((sale) => (from ? new Date(sale.date) >= from : true)),
+    (sale) => subtractMoney(sale.total, multiplyMoney(sale.unitCost, sale.qty)),
+  );
 }
 
 export type Range = "daily" | "weekly" | "monthly" | "yearly";
@@ -171,13 +182,15 @@ export function revenueSeries(s: GymState, range: Range) {
       const t = new Date(date).getTime();
       return t >= b.start.getTime() && t <= b.end.getTime();
     };
-    const membership = s.payments
-      .filter((p) => p.kind === "membership" && inRange(p.date))
-      .reduce((sum, p) => sum + p.amount, 0);
-    const product = s.payments
-      .filter((p) => p.kind === "product" && inRange(p.date))
-      .reduce((sum, p) => sum + p.amount, 0);
-    return { label: b.label, membership, product, total: membership + product };
+    const membership = sumMoney(
+      s.payments.filter((p) => p.kind === "membership" && inRange(p.date)),
+      (payment) => payment.amount,
+    );
+    const product = sumMoney(
+      s.payments.filter((p) => p.kind === "product" && inRange(p.date)),
+      (payment) => payment.amount,
+    );
+    return { label: b.label, membership, product, total: addMoney(membership, product) };
   });
 }
 
@@ -200,8 +213,8 @@ export function topProducts(s: GymState, limit = 5) {
       profit: 0,
     };
     entry.units += sale.qty;
-    entry.revenue += sale.total;
-    entry.profit += sale.total - sale.unitCost * sale.qty;
+    entry.revenue = addMoney(entry.revenue, sale.total);
+    entry.profit = addMoney(entry.profit, subtractMoney(sale.total, multiplyMoney(sale.unitCost, sale.qty)));
     map.set(sale.productId, entry);
   });
   return Array.from(map.values())
@@ -465,11 +478,14 @@ export function expensesInRange(s: GymState, range: Range) {
 
 export function revenueInRange(s: GymState, range: Range) {
   const w = rangeWindow(range);
-  return s.payments.filter((p) => inWindow(p.date, w)).reduce((sum, p) => sum + p.amount, 0);
+  return sumMoney(
+    s.payments.filter((p) => inWindow(p.date, w)),
+    (payment) => payment.amount,
+  );
 }
 
 export function expenseTotal(list: Array<{ amount: number }>) {
-  return list.reduce((sum, e) => sum + e.amount, 0);
+  return sumMoney(list, (expense) => expense.amount);
 }
 
 export function expenseSeries(s: GymState, range: Range) {
@@ -512,14 +528,17 @@ export function expenseSeries(s: GymState, range: Range) {
   const list = liveExpenses(s);
   return buckets.map((b) => ({
     label: b.label,
-    total: list.filter((e) => inWindow(e.date, b)).reduce((sum, e) => sum + e.amount, 0),
+    total: sumMoney(
+      list.filter((e) => inWindow(e.date, b)),
+      (expense) => expense.amount,
+    ),
   }));
 }
 
 export function expenseByCategory(s: GymState, range: Range) {
   const map = new Map<string, number>();
   expensesInRange(s, range).forEach((e) => {
-    map.set(e.category, (map.get(e.category) ?? 0) + e.amount);
+    map.set(e.category, addMoney(map.get(e.category) ?? 0, e.amount));
   });
   return Array.from(map.entries())
     .map(([name, value]) => ({ name, value }))

@@ -1,6 +1,6 @@
 import { AccountSecurity } from "@/components/app/AccountSecurity";
 import { InvoiceDialog } from "@/components/app/InvoiceDialog";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Database,
@@ -13,6 +13,13 @@ import {
   UserRoundCog,
   Copy,
   Check,
+  GraduationCap,
+  Sparkles,
+  CreditCard,
+  BadgeCheck,
+  Users,
+  CalendarDays,
+  Clock3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
@@ -33,13 +40,22 @@ import { REVENUE_METRICS, type RevenueMetric } from "@/lib/gym/selectors";
 import type { CalendarSystem, PhoneCountry, ReceptionistPermissions } from "@/lib/gym/types";
 import { PHONE_COUNTRIES } from "@/lib/gym/phone";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { APP_TOUR_REQUEST_KEY } from "@/components/app/OnboardingTour";
+import {
+  FREE_MEMBER_LIMIT,
+  isLocalBillingMode,
+  localSubscriptionDaysRemaining,
+  openSubscriptionPaywall,
+  regularMemberCount,
+  useSubscription,
+} from "@/lib/billing/client";
 import {
   DEFAULT_RECEPTIONIST_PERMISSIONS,
   exportBackup,
+  getCurrentSession,
   resetData,
   restoreBackup,
   saveReceptionistAccount,
-  sha256,
   setupTemplateData,
   updateSettings,
   useGym,
@@ -93,8 +109,10 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsPage() {
+  const navigate = useNavigate();
   const [invoicePreview, setInvoicePreview] = useState(false);
   const state = useGym();
+  const subscription = useSubscription();
   const fileRef = useRef<HTMLInputElement>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -112,20 +130,25 @@ function SettingsPage() {
   const [receptionistSavedOpen, setReceptionistSavedOpen] = useState(false);
   const [receptionistError, setReceptionistError] = useState("");
   const [changingReceptionistPassword, setChangingReceptionistPassword] = useState(false);
-  const [savedReceptionistCredentials, setSavedReceptionistCredentials] = useState<{
-    email: string;
-    password: string | null;
-  } | null>(null);
+  const [savedReceptionistEmail, setSavedReceptionistEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!state) return;
     const phoneCountry = state.settings.phoneCountry ?? "india";
     const currency = CURRENCY_BY_COUNTRY[phoneCountry];
     if (state.settings.currency !== currency) updateSettings({ currency });
-  }, [state?.settings.currency, state?.settings.phoneCountry]);
+  }, [state]);
 
   if (!state) return null;
   const s = state.settings;
+  const registeredMembers = regularMemberCount(state);
+  const localBilling = isLocalBillingMode();
+  const subscriptionDays = localSubscriptionDaysRemaining(subscription);
+  const subscriptionExpiry = subscription.currentPeriodEnd
+    ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(
+        new Date(subscription.currentPeriodEnd),
+      )
+    : null;
   const receptionist = state.staff?.receptionist;
   const receptionistForm = receptionistDraft ?? {
     enabled: receptionist?.enabled ?? false,
@@ -155,7 +178,7 @@ function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        subtitle="Accounts and business data are stored securely on this device — no cloud required"
+        subtitle="Core gym operations work locally; online billing becomes authoritative when cloud services are connected"
       />
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -336,6 +359,157 @@ function SettingsPage() {
           </p>
         </Panel>
 
+        <Panel
+          title="Subscription & Billing"
+          description="Free member allowance, Pro lifecycle, expiry, payments and recharge codes"
+          collapsible
+        >
+          <div
+            className={`mb-4 rounded-xl border px-4 py-3 text-xs leading-5 ${
+              localBilling
+                ? "border-gold/30 bg-gold/5 text-muted-foreground"
+                : "border-success/30 bg-success/5 text-muted-foreground"
+            }`}
+          >
+            <span className="font-semibold text-foreground">
+              {localBilling ? "Local subscription mode." : "Cloud billing connected."}
+            </span>{" "}
+            {localBilling
+              ? "You can fully test activation, expiry and renewal on this computer. Stripe/Razorpay remain online-only and will take over after Supabase billing is configured."
+              : "Subscription status is verified from the server and cannot be legitimately unlocked by editing browser storage."}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border bg-secondary/25 p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Users className="h-4 w-4" /> Member usage
+              </div>
+              <p className="mt-3 font-display text-3xl tracking-wide">
+                {registeredMembers}
+                {!subscription.active && (
+                  <span className="text-lg text-muted-foreground"> / {FREE_MEMBER_LIMIT}</span>
+                )}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {subscription.active
+                  ? "Pro is active, so the free 10-member cap is unlocked."
+                  : `Free accounts can add up to ${FREE_MEMBER_LIMIT} gym members.`}
+              </p>
+            </div>
+
+            <div
+              className={`rounded-xl border p-4 ${
+                subscription.active ? "border-success/35 bg-success/10" : "border-gold/30 bg-gold/5"
+              }`}
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em]">
+                {subscription.active ? (
+                  <BadgeCheck className="h-4 w-4 text-success" />
+                ) : (
+                  <CreditCard className="h-4 w-4 text-gold" />
+                )}
+                <span className={subscription.active ? "text-success" : "text-gold"}>
+                  {subscription.active ? "IRONVAULT Pro" : "Free plan"}
+                </span>
+              </div>
+              <p className="mt-3 text-sm font-medium">
+                {subscription.active
+                  ? subscriptionExpiry
+                    ? `Active through ${subscriptionExpiry}`
+                    : "Paid access active"
+                  : "Upgrade when you need more than 10 members"}
+              </p>
+              <p className="mt-1 text-xs capitalize text-muted-foreground">
+                {subscription.active && subscription.source
+                  ? `Activated via ${subscription.source}`
+                  : "Pay with Razorpay, Stripe, or use a 30-day recharge code."}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border bg-secondary/20 p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <CalendarDays className="h-4 w-4" /> Expiry date
+              </div>
+              <p className="mt-3 text-sm font-semibold">
+                {subscriptionExpiry ?? "No active expiry date"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {subscription.active
+                  ? "On this date, Pro automatically returns to the free member-growth limit unless renewed."
+                  : subscription.status === "expired"
+                    ? "The previous Pro period has ended. Existing gym data remains available."
+                    : "An expiry date appears here after Pro is activated."}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-border bg-secondary/20 p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Clock3 className="h-4 w-4" /> Time remaining
+              </div>
+              <p className="mt-3 text-sm font-semibold">
+                {subscription.active
+                  ? `${subscriptionDays} day${subscriptionDays === 1 ? "" : "s"} remaining`
+                  : subscription.status === "expired"
+                    ? "Expired"
+                    : "Free plan"}
+              </p>
+              <p className="mt-1 text-xs capitalize text-muted-foreground">
+                {subscription.source
+                  ? `Activation source: ${subscription.source === "local" ? "local test license" : subscription.source}`
+                  : "No Pro activation recorded"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+              {localBilling
+                ? "Local Pro is for pre-deployment testing on this computer. Once cloud billing is enabled, local test entitlement is ignored automatically."
+                : "Subscription access is verified separately from your editable gym data, so changing a local backup or browser storage does not legitimately activate Pro."}
+            </p>
+            <Button type="button" onClick={() => openSubscriptionPaywall("manage")}>
+              <CreditCard className="mr-2 h-4 w-4" />
+              {subscription.active ? "Extend Pro" : "Upgrade to Pro"}
+            </Button>
+          </div>
+        </Panel>
+
+        <Panel
+          title="Guided App Tour"
+          description="Replay the complete 15-step walkthrough whenever you need it"
+          collapsible
+        >
+          <div className="flex flex-col gap-4 rounded-xl border border-gold/25 bg-gold/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-gold/30 bg-gold/10 text-gold">
+                <GraduationCap className="h-5 w-5" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold">Learn how IRONVAULT works</p>
+                  <Sparkles className="h-4 w-4 text-gold" />
+                </div>
+                <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
+                  Walk through the dashboard, members, memberships, payments, products, reports,
+                  search and other key tools. You can skip the tour at any time.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              className="shrink-0"
+              onClick={async () => {
+                window.sessionStorage.setItem(APP_TOUR_REQUEST_KEY, "true");
+                await navigate({ to: "/" });
+              }}
+            >
+              <GraduationCap className="mr-2 h-4 w-4" /> Start App Tour
+            </Button>
+          </div>
+        </Panel>
+
         <Panel title="Backup & Restore" collapsible>
           <p className="text-sm text-muted-foreground">
             Export a complete JSON snapshot of your gym data and keep it somewhere safe. Restoring
@@ -372,8 +546,15 @@ function SettingsPage() {
                 try {
                   restoreBackup(await file.text());
                   toast.success("Backup restored");
-                } catch {
-                  toast.error("Could not read that file");
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : "Could not read that file";
+                  if (message.includes("Activate Pro")) {
+                    openSubscriptionPaywall("member-limit");
+                    toast.info(message);
+                  } else {
+                    toast.error("Could not read that file");
+                  }
                 }
                 e.target.value = "";
               }}
@@ -438,17 +619,17 @@ function SettingsPage() {
                   <Input
                     id="receptionist-password"
                     type="password"
-                    minLength={8}
+                    minLength={12}
                     autoComplete="new-password"
                     value={receptionistForm.password}
-                    placeholder="At least 8 characters"
+                    placeholder="At least 12 characters"
                     onChange={(event) => (
                       setReceptionistError(""),
                       setReceptionistDraft({ ...receptionistForm, password: event.target.value })
                     )}
                   />
                   <p className="text-xs text-muted-foreground">
-                    It must differ from the administrator password.
+                    Use a unique password of at least 12 characters and share it securely.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -456,7 +637,7 @@ function SettingsPage() {
                   <Input
                     id="receptionist-confirm-password"
                     type="password"
-                    minLength={8}
+                    minLength={12}
                     autoComplete="new-password"
                     value={receptionistForm.confirmPassword}
                     placeholder="Type the same password again"
@@ -622,42 +803,38 @@ function SettingsPage() {
                 const normalizedPassword = receptionistForm.password.trim();
                 const confirmedPassword = receptionistForm.confirmPassword.trim();
                 const replacingPassword = !receptionist || changingReceptionistPassword;
-                if (replacingPassword && normalizedPassword.length < 8)
-                  return setReceptionistError("Receptionist password must be at least 8 characters.");
+                if (replacingPassword && normalizedPassword.length < 12)
+                  return setReceptionistError(
+                    "Receptionist password must be at least 12 characters.",
+                  );
                 if (replacingPassword && normalizedPassword !== confirmedPassword)
                   return setReceptionistError("Receptionist passwords do not match.");
-                if (email.toLowerCase() === state.auth.email.toLowerCase())
+                if (email.toLowerCase() === getCurrentSession()?.email.toLowerCase())
                   return setReceptionistError(
                     "Use an email different from the administrator account.",
                   );
-                if (
-                  replacingPassword &&
-                  (await sha256(normalizedPassword)) === state.auth.passwordHash
-                )
-                  return setReceptionistError(
-                    "Receptionist password must be different from the administrator password.",
-                  );
-
                 setSavingReceptionist(true);
-                const saved = await saveReceptionistAccount({
-                  enabled: receptionistForm.enabled,
-                  name,
-                  email,
-                  password: replacingPassword ? normalizedPassword : undefined,
-                  permissions: receptionistForm.permissions,
-                });
+                let saved = false;
+                try {
+                  saved = await saveReceptionistAccount({
+                    enabled: receptionistForm.enabled,
+                    name,
+                    email,
+                    password: replacingPassword ? normalizedPassword : undefined,
+                    permissions: receptionistForm.permissions,
+                  });
+                } catch (error) {
+                  setSavingReceptionist(false);
+                  return setReceptionistError(
+                    error instanceof Error ? error.message : "Could not save the receptionist account.",
+                  );
+                }
                 setSavingReceptionist(false);
                 if (!saved)
                   return setReceptionistError(
-                    "Could not save the receptionist account to browser storage. Free some browser storage and try again.",
+                    "Could not save the receptionist account. Verify your connection and try again.",
                   );
-                setSavedReceptionistCredentials({
-                  email,
-                  password:
-                    replacingPassword
-                      ? normalizedPassword
-                      : receptionist?.passwordCopy ?? null,
-                });
+                setSavedReceptionistEmail(email);
                 setReceptionistDraft(null);
                 setChangingReceptionistPassword(false);
                 setReceptionistSavedOpen(true);
@@ -732,7 +909,7 @@ function SettingsPage() {
                 <div className="min-w-0">
                   <p className="text-xs text-muted-foreground">Login email</p>
                   <p className="mt-1 break-all text-sm font-medium">
-                    {savedReceptionistCredentials?.email ?? state.staff?.receptionist?.email}
+                    {savedReceptionistEmail ?? state.staff?.receptionist?.email}
                   </p>
                 </div>
                 <Button
@@ -744,7 +921,7 @@ function SettingsPage() {
                   title="Copy email"
                   onClick={async () => {
                     const email =
-                      savedReceptionistCredentials?.email ?? state.staff?.receptionist?.email ?? "";
+                      savedReceptionistEmail ?? state.staff?.receptionist?.email ?? "";
                     if (!email) return;
                     try {
                       await navigator.clipboard.writeText(email);
@@ -758,45 +935,9 @@ function SettingsPage() {
                 </Button>
               </div>
             </div>
-            <div className="rounded-xl border border-border bg-secondary/30 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">Login password</p>
-                  <p className="mt-1 break-all text-sm font-medium">
-                    {savedReceptionistCredentials?.password ?? "Password unavailable — change it once to enable copying"}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  disabled={!savedReceptionistCredentials?.password}
-                  aria-label="Copy receptionist password"
-                  title={
-                    savedReceptionistCredentials?.password
-                      ? "Copy password"
-                      : "Change the receptionist password once to make it available for copying"
-                  }
-                  onClick={async () => {
-                    const password = savedReceptionistCredentials?.password;
-                    if (!password) return;
-                    try {
-                      await navigator.clipboard.writeText(password);
-                      toast.success("Receptionist password copied");
-                    } catch {
-                      toast.error("Could not copy the password");
-                    }
-                  }}
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
             <p className="text-xs text-muted-foreground">
-              The saved receptionist password can be copied here by the owner. Older receptionist
-              accounts created before this feature need one password change before the current
-              password becomes available here. It is never placed in the copied login link.
+              Passwords are handled only by Supabase Auth and are never stored or made retrievable
+              by IronVault. Share the password securely when you create or reset the staff account.
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="secondary" onClick={() => setReceptionistSavedOpen(false)}>
@@ -871,7 +1012,14 @@ function SettingsPage() {
               </Button>
               <Button
                 onClick={() => {
-                  setupTemplateData();
+                  if (!setupTemplateData()) {
+                    setTemplateOpen(false);
+                    openSubscriptionPaywall("member-limit");
+                    toast.info(
+                      "The full template contains more than 10 members. Activate Pro first.",
+                    );
+                    return;
+                  }
                   setTemplateOpen(false);
                   toast.success("Template data set up successfully");
                 }}

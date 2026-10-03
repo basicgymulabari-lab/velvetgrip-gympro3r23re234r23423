@@ -32,7 +32,14 @@ import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { TablePager } from "@/components/app/TablePager";
 import { AppDatePicker } from "@/components/app/AppDatePicker";
+import { PrivateAssetImage, usePrivateAssetUrl } from "@/components/app/PrivateAssetImage";
 import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
+import { subtractMoney, sumMoney } from "@/lib/gym/money";
+import {
+  dataUrlToBlob,
+  deletePrivateAsset,
+  uploadPrivateAsset,
+} from "@/lib/gym/storage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -148,9 +155,10 @@ function customExpenseSeries(expenses: Expense[], start: string, end: string) {
         bucketDays === 1
           ? formatDayMonth(bucketStart)
           : `${formatDayMonth(bucketStart)}–${formatDayMonth(bucketEnd)}`,
-      total: expenses
-        .filter((expense) => inWindow(expense.date, { start: bucketStart, end: bucketEnd }))
-        .reduce((sum, expense) => sum + expense.amount, 0),
+      total: sumMoney(
+        expenses.filter((expense) => inWindow(expense.date, { start: bucketStart, end: bucketEnd })),
+        (expense) => expense.amount,
+      ),
     });
     cursor = new Date(bucketEnd);
     cursor.setMilliseconds(cursor.getMilliseconds() + 1);
@@ -205,14 +213,17 @@ function ExpensesPage() {
 
   const revenue =
     range === "custom"
-      ? state.payments
-          .filter((payment) => customValid && inWindow(payment.date, customDateWindow))
-          .reduce((sum, payment) => sum + payment.amount, 0)
+      ? sumMoney(
+          state.payments.filter(
+            (payment) => customValid && inWindow(payment.date, customDateWindow),
+          ),
+          (payment) => payment.amount,
+        )
       : revenueInRange(state, range);
   // Search only narrows the table; finance cards must continue to represent
   // the complete selected date range.
   const expenses = expenseTotal(scoped);
-  const profit = revenue - expenses;
+  const profit = subtractMoney(revenue, expenses);
   const series =
     range === "custom"
       ? customExpenseSeries(scoped, customStart, customEnd)
@@ -613,8 +624,9 @@ function Metric({
 }
 
 function AttachmentPreview({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
-  if (!expense?.attachment) return null;
-  const att = expense.attachment;
+  const att = expense?.attachment;
+  const { url } = usePrivateAssetUrl(att?.path ?? att?.dataUrl);
+  if (!expense || !att) return null;
   const isPdf = att.type === "application/pdf";
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -626,9 +638,20 @@ function AttachmentPreview({ expense, onClose }: { expense: Expense | null; onCl
         </DialogHeader>
         <div className="rounded-xl border border-border bg-card p-3">
           {isPdf ? (
-            <iframe title={att.name} src={att.dataUrl} className="h-[70vh] w-full rounded-lg" />
+            url ? (
+              <iframe title={att.name} src={url} className="h-[70vh] w-full rounded-lg" />
+            ) : (
+              <p className="p-8 text-center text-sm text-muted-foreground">Loading private attachment…</p>
+            )
           ) : (
-            <img src={att.dataUrl} alt={att.name} className="mx-auto max-h-[70vh] rounded-lg" />
+            <PrivateAssetImage
+              source={att.path ?? att.dataUrl}
+              alt={att.name}
+              className="mx-auto max-h-[70vh] rounded-lg"
+              fallback={
+                <p className="p-8 text-center text-sm text-muted-foreground">Loading private attachment…</p>
+              }
+            />
           )}
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -658,6 +681,8 @@ function ExpenseFormDialog({
   expense: Expense | null;
   onOpenChange: (v: boolean) => void;
 }) {
+  const state = useGym();
+  const currency = state?.settings.currency ?? "₹";
   const key = expense?.id ?? "new";
   const [title, setTitle] = useState(expense?.title ?? "");
   const [category, setCategory] = useState<ExpenseCategory>(expense?.category ?? "Rent");
@@ -696,7 +721,7 @@ function ExpenseFormDialog({
     title: title.trim().length === 0 ? "Expense title is required" : "",
     amount:
       !amount || Number.isNaN(amountValue) || amountValue <= 0
-        ? "Amount must be greater than ₹0"
+        ? `Amount must be greater than ${currency}0`
         : "",
     date: futureDate ? "Future dates are not allowed" : "",
   };
@@ -724,32 +749,53 @@ function ExpenseFormDialog({
     reader.readAsDataURL(file);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (submittingRef.current) return;
     if (!valid) {
       toast.error(errors.title || errors.amount || errors.date);
       return;
     }
     submittingRef.current = true;
-    const payload = {
-      title,
-      category,
-      amount: amountValue,
-      date: new Date(`${date}T12:00:00`).toISOString(),
-      method,
-      notes,
-      attachment,
-      ...(expense ? { locked } : {}),
-    };
+    let uploadedPath: string | null = null;
     try {
+      let persistedAttachment = attachment;
+      if (attachment?.dataUrl?.startsWith("data:")) {
+        const blob = await dataUrlToBlob(attachment.dataUrl);
+        uploadedPath = await uploadPrivateAsset("expenses", blob, attachment.name);
+        persistedAttachment = {
+          name: attachment.name,
+          type: attachment.type,
+          size: attachment.size,
+          path: uploadedPath,
+        };
+      }
+      const payload = {
+        title,
+        category,
+        amount: amountValue,
+        date: new Date(`${date}T12:00:00`).toISOString(),
+        method,
+        notes,
+        attachment: persistedAttachment,
+        ...(expense ? { locked } : {}),
+      };
       if (expense) {
         updateExpense(expense.id, payload);
+        const previousPath = expense.attachment?.path;
+        if (previousPath && previousPath !== persistedAttachment?.path) {
+          void deletePrivateAsset(previousPath).catch(() =>
+            toast.warning("Expense updated, but the previous private attachment could not be removed."),
+          );
+        }
         toast.success("Expense updated");
       } else {
         addExpense(payload);
         toast.success("Expense recorded");
       }
       onOpenChange(false);
+    } catch (error) {
+      if (uploadedPath) await deletePrivateAsset(uploadedPath).catch(() => undefined);
+      toast.error(error instanceof Error ? error.message : "The expense could not be saved.");
     } finally {
       submittingRef.current = false;
     }
@@ -913,10 +959,13 @@ function ExpenseFormDialog({
                     <Eye className="h-3.5 w-3.5" /> PDF attached — preview available from the table
                   </p>
                 ) : (
-                  <img
-                    src={attachment.dataUrl}
+                  <PrivateAssetImage
+                    source={attachment.path ?? attachment.dataUrl}
                     alt={attachment.name}
                     className="mx-auto max-h-40 rounded-lg"
+                    fallback={
+                      <p className="text-xs text-muted-foreground">Loading private image…</p>
+                    }
                   />
                 )}
               </div>

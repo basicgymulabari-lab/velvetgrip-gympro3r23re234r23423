@@ -29,6 +29,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
 import { MemberFormDialog } from "@/components/app/MemberFormDialog";
+import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -208,10 +209,11 @@ function MemberProfile() {
             <div className="flex flex-col items-center text-center">
               <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-3xl border border-gold/35 bg-secondary font-display text-3xl text-gold">
                 {member.photo ? (
-                  <img
-                    src={member.photo}
+                  <PrivateAssetImage
+                    source={member.photo}
                     alt={member.name}
                     className="h-full w-full object-cover"
+                    fallback={member.name.slice(0, 2).toUpperCase()}
                   />
                 ) : (
                   member.name.slice(0, 2).toUpperCase()
@@ -1273,7 +1275,13 @@ function MeasurementDialog({
           <Button
             onClick={() => {
               const values = Object.values(form).map(Number);
-              if (values.some((v) => Number.isNaN(v) || v < 0) || !form.weightKg) {
+              const weight = Number(form.weightKg);
+              if (
+                !form.weightKg ||
+                !Number.isFinite(weight) ||
+                weight <= 0 ||
+                values.some((v) => !Number.isFinite(v) || v < 0)
+              ) {
                 toast.error("Enter valid positive numbers");
                 return;
               }

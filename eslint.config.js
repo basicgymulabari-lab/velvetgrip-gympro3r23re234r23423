@@ -34,7 +34,16 @@ export default tseslint.config(
       ],
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": "off",
+      // Formatting is enforced separately by `npm run format`. Keeping line-ending
+      // normalization out of ESLint avoids thousands of CRLF/LF-only diagnostics
+      // on Windows while preserving all semantic lint rules.
+      "prettier/prettier": "off",
     },
   },
   eslintPluginPrettier,
+  {
+    rules: {
+      "prettier/prettier": "off",
+    },
+  },
 );
