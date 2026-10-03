@@ -17,9 +17,19 @@ export function isDirectAssetSource(value?: string | null) {
 
 export async function dataUrlToBlob(dataUrl: string) {
   if (!dataUrl.startsWith("data:")) throw new Error("Expected an inline file.");
-  const response = await fetch(dataUrl);
-  if (!response.ok) throw new Error("The selected file could not be prepared for upload.");
-  return response.blob();
+  const separator = dataUrl.indexOf(",");
+  if (separator < 0) throw new Error("The selected file could not be prepared for upload.");
+  const metadata = dataUrl.slice(5, separator);
+  const mimeType = metadata.split(";")[0] || "application/octet-stream";
+  const payload = dataUrl.slice(separator + 1);
+  try {
+    const bytes = metadata.toLowerCase().includes(";base64")
+      ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+      : new TextEncoder().encode(decodeURIComponent(payload));
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    throw new Error("The selected file could not be prepared for upload.");
+  }
 }
 
 function safeExtension(blob: Blob, filename?: string) {
