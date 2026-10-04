@@ -261,6 +261,8 @@ export async function redeemRechargeCode(code: string) {
   if (normalized.length < 8) throw new Error("Enter a valid recharge code.");
   const { data, error } = await supabase.rpc("redeem_recharge_code", { p_code: normalized });
   if (error) {
+    if (error.message.includes("NOT_ASSIGNED_TO_ACCOUNT"))
+      throw new Error("This code is assigned to a different gym-owner account. Sign in with the assigned account.");
     if (error.message.includes("ALREADY_USED"))
       throw new Error("This recharge code has already been used.");
     if (error.message.includes("EXPIRED")) throw new Error("This recharge code has expired.");

@@ -82,28 +82,33 @@ function sanitizedStaff(staff: GymState["staff"] | undefined): GymState["staff"]
   return receptionist ? { ...staff, receptionist } : {};
 }
 
-function flushCloudSave(nextState: GymState) {
-  if (!cloudOwnerId || cloudRevision === null) return cloudSaveQueue;
+function flushCloudSave(nextState: GymState, notifyOnError = true): Promise<boolean> {
+  if (!cloudOwnerId || cloudRevision === null) return Promise.resolve(true);
   const ownerId = cloudOwnerId;
   cloudSyncPending = true;
-  cloudSaveQueue = cloudSaveQueue.then(async () => {
+  let saved = false;
+  const queuedSave = cloudSaveQueue.then(async () => {
     if (cloudOwnerId !== ownerId || cloudRevision === null) return;
     try {
       cloudRevision = await saveCloudWorkspace(nextState, cloudRevision);
+      saved = true;
       if (state === nextState) cloudSyncPending = false;
     } catch (error) {
       // Never silently overwrite a newer server revision. The pending marker
       // remains set and the UI receives a safe sync-error event so the user can
       // retry/reload instead of losing concurrent edits.
       console.error("Unable to sync the gym workspace to Supabase", error);
-      window.dispatchEvent(
-        new CustomEvent("ironvault:cloud-sync-error", {
-          detail: { message: "Your latest change could not be saved. Check your connection and retry." },
-        }),
-      );
+      if (notifyOnError) {
+        window.dispatchEvent(
+          new CustomEvent("ironvault:cloud-sync-error", {
+            detail: { message: "Your latest change could not be saved. Check your connection and retry." },
+          }),
+        );
+      }
     }
   });
-  return cloudSaveQueue;
+  cloudSaveQueue = queuedSave;
+  return queuedSave.then(() => saved);
 }
 
 function scheduleCloudSave(nextState: GymState) {
@@ -130,9 +135,8 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function setState(updater: (s: GymState) => GymState) {
-  if (!state) throw new Error("Gym workspace is not loaded.");
-  state = updater(state);
+function replaceState(nextState: GymState, syncCloud = true) {
+  state = nextState;
   configureCalendarSystem(state.settings.calendarSystem);
   if (localDemoEnabled() && currentSession?.email === "demo@ironvault.local") {
     try {
@@ -141,8 +145,13 @@ function setState(updater: (s: GymState) => GymState) {
       console.warn("Could not save local demo workspace", error);
     }
   }
-  scheduleCloudSave(state);
+  if (syncCloud) scheduleCloudSave(state);
   emit();
+}
+
+function setState(updater: (s: GymState) => GymState) {
+  if (!state) throw new Error("Gym workspace is not loaded.");
+  replaceState(updater(state));
 }
 
 function subscribe(listener: () => void) {
@@ -1409,18 +1418,71 @@ export function resetData() {
   }));
 }
 
-export function setupTemplateData() {
-  const template = buildSeed();
-  if (regularMemberCount(template) > FREE_MEMBER_LIMIT && !getSubscriptionSnapshot().active) {
-    return false;
+export async function setupTemplateData() {
+  const previous = getState();
+  const ownerAtStart = cloudOwnerId;
+  const hadPendingCloudSave = Boolean(cloudSaveTimer) || cloudSyncPending;
+
+  // Flush pending edits before replacing business data, so the template save
+  // uses the latest optimistic-lock revision and never silently loses work.
+  if (cloudSaveTimer) {
+    clearTimeout(cloudSaveTimer);
+    cloudSaveTimer = null;
   }
-  setState((st) => {
-    return {
-      ...template,
-      auth: st.auth,
-      settings: st.settings,
-    };
-  });
+  if (cloudOwnerId && cloudRevision !== null && hadPendingCloudSave) {
+    const saved = await flushCloudSave(previous, false);
+    if (!saved) {
+      throw new Error("Your current changes could not be saved. Check your connection and try again.");
+    }
+  }
+  if (state !== previous || cloudOwnerId !== ownerAtStart) {
+    throw new Error("Your workspace changed while setting up. Please try again.");
+  }
+
+  // Free workspaces get a representative starter dataset within their roster
+  // allowance. Pro workspaces retain the complete demo dataset.
+  const template = buildSeed(
+    getSubscriptionSnapshot().active ? undefined : FREE_MEMBER_LIMIT,
+  );
+  const nextState: GymState = {
+    ...template,
+    auth: previous.auth,
+    settings: previous.settings,
+    staff: previous.staff,
+  };
+
+  replaceState(nextState, false);
+
+  if (cloudOwnerId && cloudRevision !== null) {
+    const saved = await flushCloudSave(nextState, false);
+    if (!saved) {
+      // Restore the server's latest revision when possible. If the request
+      // failed offline, keep the last known good workspace in memory.
+      const latest = await loadCloudWorkspace().catch(() => null);
+      if (latest && cloudOwnerId === ownerAtStart) {
+        replaceState(
+          {
+            ...latest.state,
+            expenses: (latest.state.expenses ?? []).map((expense) => ({
+              ...expense,
+              locked: expense.locked !== false,
+            })),
+            inquiries: latest.state.inquiries ?? [],
+            staff: sanitizedStaff(latest.state.staff),
+          },
+          false,
+        );
+        cloudRevision = latest.revision;
+        cloudGymId = latest.gymId;
+        cloudSyncPending = false;
+      } else if (state === nextState) {
+        replaceState(previous, false);
+      }
+      throw new Error(
+        "Template data could not be saved to your gym. Your previous data was restored; check your connection and try again.",
+      );
+    }
+  }
   return true;
 }
 

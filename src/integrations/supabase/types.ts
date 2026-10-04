@@ -179,6 +179,7 @@ export type Database = {
           provider_subscription_id: string | null;
           provider_period_end: string | null;
           recharge_period_end: string | null;
+          manual_period_end: string | null;
           current_period_end: string | null;
           last_verified_at: string;
           created_at: string;
@@ -195,6 +196,7 @@ export type Database = {
           provider_subscription_id?: string | null;
           provider_period_end?: string | null;
           recharge_period_end?: string | null;
+          manual_period_end?: string | null;
           current_period_end?: string | null;
           last_verified_at?: string;
           created_at?: string;
@@ -211,6 +213,7 @@ export type Database = {
           provider_subscription_id?: string | null;
           provider_period_end?: string | null;
           recharge_period_end?: string | null;
+          manual_period_end?: string | null;
           current_period_end?: string | null;
           last_verified_at?: string;
           created_at?: string;
@@ -228,7 +231,10 @@ export type Database = {
           redeemed_by: string | null;
           redeemed_at: string | null;
           revoked_at: string | null;
+          revoked_by: string | null;
           created_by: string | null;
+          target_user_id: string | null;
+          target_email: string | null;
           created_at: string;
         };
         Insert: {
@@ -240,7 +246,10 @@ export type Database = {
           redeemed_by?: string | null;
           redeemed_at?: string | null;
           revoked_at?: string | null;
+          revoked_by?: string | null;
           created_by?: string | null;
+          target_user_id?: string | null;
+          target_email?: string | null;
           created_at?: string;
         };
         Update: {
@@ -252,7 +261,10 @@ export type Database = {
           redeemed_by?: string | null;
           redeemed_at?: string | null;
           revoked_at?: string | null;
+          revoked_by?: string | null;
           created_by?: string | null;
+          target_user_id?: string | null;
+          target_email?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -293,6 +305,90 @@ export type Database = {
       };
       redeem_recharge_code: {
         Args: { p_code: string };
+        Returns: Json;
+      };
+      iv_is_platform_admin: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      platform_list_owners: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          gym_id: string;
+          gym_name: string;
+          owner_id: string;
+          owner_email: string;
+          status: string;
+          source: string | null;
+          current_period_end: string | null;
+          days_remaining: number;
+          can_revoke_bonus: boolean;
+        }[];
+      };
+      platform_list_recharge_codes: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          code_id: string;
+          batch_label: string | null;
+          duration_days: number;
+          created_at: string;
+          redeem_by: string | null;
+          assigned_owner: string | null;
+          issued_by: string | null;
+          redeemed_by: string | null;
+          redeemed_at: string | null;
+          revoked_at: string | null;
+          revoked_by: string | null;
+          code_status: string;
+        }[];
+      };
+      platform_generate_recharge_code: {
+        Args: {
+          p_owner_id: string;
+          p_days: number;
+          p_valid_days: number;
+          p_batch_label?: string | null;
+        };
+        Returns: {
+          code: string;
+          duration_days: number;
+          redeem_by: string;
+          batch_label: string;
+          target_email: string;
+        }[];
+      };
+      platform_grant_manual_pro: {
+        Args: { p_gym_id: string; p_days: number };
+        Returns: Json;
+      };
+      platform_revoke_pro: {
+        Args: { p_gym_id: string };
+        Returns: Json;
+      };
+      platform_revoke_recharge_code: {
+        Args: { p_code_id: string };
+        Returns: undefined;
+      };
+      platform_list_signup_invites: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          email: string;
+          note: string;
+          invited_at: string;
+          consumed_at: string | null;
+          revoked_at: string | null;
+        }[];
+      };
+      platform_add_signup_invite: {
+        Args: { p_email: string; p_note?: string };
+        Returns: Json;
+      };
+      platform_revoke_signup_invite: {
+        Args: { p_email: string };
+        Returns: undefined;
+      };
+      platform_export_gym_backup: {
+        Args: { p_gym_id: string };
         Returns: Json;
       };
     };

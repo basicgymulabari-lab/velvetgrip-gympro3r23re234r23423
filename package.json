@@ -19,6 +19,7 @@
     "test:cloud-smoke": "node scripts/verify-cloud-smoke.mjs",
     "test:db": "npx supabase test db",
     "test:db:linked": "npx supabase db query --linked --file supabase/tests/tenant_isolation_assert.sql",
+    "test:db:recharge": "npx supabase db query --linked --file supabase/tests/recharge_redemption_assert.sql",
     "test:all": "npm run typecheck && npm run lint && npm run test:logic && npm run build",
     "audit:deps": "npm audit --audit-level=high",
     "billing:codes": "node scripts/generate-recharge-codes.mjs",

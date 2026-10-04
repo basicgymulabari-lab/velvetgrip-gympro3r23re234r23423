@@ -31,10 +31,14 @@ export function AccountForm() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [recoverySession, setRecoverySession] = useState(false);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [restoreFailed, setRestoreFailed] = useState(false);
   const lock = useRef(false);
   const recovering = useRef(false);
   useEffect(() => {
     let active = true;
+    setChecking(true);
+    setRestoreFailed(false);
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     recovering.current =
       fragment.get("type") === "recovery" ||
@@ -67,18 +71,29 @@ export function AccountForm() {
       }
     });
     void (async () => {
+      let sessionLoaded = false;
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
+        sessionLoaded = true;
         if (!active) return;
         if (recovering.current) {
           setRecoverySession(Boolean(data.session));
           if (!data.session) setError("Your reset link has expired. Request a new reset email.");
         } else if (data.session && (await completeCloudLogin()) && active)
           await navigate({ to: "/", replace: true });
-      } catch {
-        if (active)
-          setError("We could not load your account. Check your connection and sign in again.");
+      } catch (err) {
+        if (active) {
+          // Do not swallow the distinction between a stale auth session and a
+          // workspace/API failure: they have different recovery paths.
+          console.error("[Auth] Could not restore the saved sign-in", err);
+          setRestoreFailed(true);
+          setError(
+            sessionLoaded
+              ? "Your sign-in is valid, but we could not load your gym workspace. Check your connection and try again."
+              : "We could not restore your saved sign-in. Your session may have expired or the connection was interrupted.",
+          );
+        }
       } finally {
         if (active) setChecking(false);
       }
@@ -87,7 +102,7 @@ export function AccountForm() {
       active = false;
       listener.subscription.unsubscribe();
     };
-  }, [cloudAuthAvailable, navigate]);
+  }, [cloudAuthAvailable, navigate, restoreAttempt]);
   function switchMode(next: Mode) {
     setMode(next);
     setPassword("");
@@ -358,6 +373,37 @@ export function AccountForm() {
             >
               {error}
             </p>
+          )}
+          {restoreFailed && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || checking}
+                onClick={() => {
+                  setError("");
+                  setRestoreAttempt((attempt) => attempt + 1);
+                }}
+              >
+                Try again
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy || checking}
+                onClick={() =>
+                  void run(async () => {
+                    const { error } = await supabase.auth.signOut({ scope: "local" });
+                    if (error) throw error;
+                    setRestoreFailed(false);
+                    setError("");
+                    setNotice("Saved sign-in cleared. Sign in again with your email and password.");
+                  })
+                }
+              >
+                Clear saved sign-in
+              </Button>
+            </div>
           )}
           {notice && (
             <p

@@ -306,8 +306,9 @@ const NOTE_TITLES = [
   "Monthly review",
 ];
 
-export function buildSeed(): GymState {
+export function buildSeed(memberLimit = MEMBER_SEED.length): GymState {
   const now = today();
+  const templateMembers = MEMBER_SEED.slice(0, Math.max(1, Math.min(MEMBER_SEED.length, memberLimit)));
   const members: Member[] = [];
   const memberships: Membership[] = [];
   const payments: Payment[] = [];
@@ -316,7 +317,7 @@ export function buildSeed(): GymState {
 
   const nextInvoice = () => `INV-${++invoiceSeq}`;
 
-  MEMBER_SEED.forEach((seed, i) => {
+  templateMembers.forEach((seed, i) => {
     const plan = PLANS.find((p) => p.id === seed.planId)!;
     const end = addDays(now, seed.endOffset);
     const start = addDays(end, -plan.durationDays);
@@ -448,7 +449,7 @@ export function buildSeed(): GymState {
       const qty = rand(1, 3);
       const saleId = uid("sale");
       const date = iso(addDays(now, -d));
-      const buyer = MEMBER_SEED[(d + k) % MEMBER_SEED.length];
+    const buyer = templateMembers[(d + k) % templateMembers.length];
       sales.push({
         id: saleId,
         invoiceNo: nextInvoice(),
@@ -459,7 +460,7 @@ export function buildSeed(): GymState {
         unitCost: product.cost,
         total: product.price * qty,
         buyer: buyer.name,
-        memberId: `mem_${((d + k) % MEMBER_SEED.length) + 1}`,
+        memberId: `mem_${((d + k) % templateMembers.length) + 1}`,
         date,
       });
       payments.push({
@@ -476,14 +477,14 @@ export function buildSeed(): GymState {
   }
 
   const activitySeed: Array<[Activity["type"], string, string, number]> = [
-    ["member_added", "New member registered", "Imran Sheikh joined Quarterly Power", 0.2],
-    ["payment_received", "Payment received", "₹4,000 from Arjun Nair", 0.6],
+    ["member_added", "New member registered", "Sagar Chhetri joined Annual Platinum", 0.2],
+    ["payment_received", "Payment received", "₹4,000 from Karan Mehta", 0.6],
     ["product_sold", "Product sold", "Whey Protein 1kg × 1 sold to Neha Kapoor", 1.2],
-    ["membership_renewed", "Membership renewed", "Rohit Verma renewed Annual Platinum", 2],
-    ["invoice_generated", "Invoice generated", "Invoice INV-1042 created for Divya Menon", 3],
+    ["membership_renewed", "Membership renewed", "Vikram Rathore renewed Annual Platinum", 2],
+    ["invoice_generated", "Invoice generated", "Invoice INV-1042 created for Ananya Iyer", 3],
     ["membership_expired", "Membership expired", "Aman Singh's membership expired", 4],
     ["product_added", "Product added", "Knee Wraps added to inventory", 5],
-    ["member_added", "New member registered", "Tanvi Desai joined Personal Training", 7],
+    ["member_added", "New member registered", "Neha Kapoor joined Personal Training", 7],
     ["payment_received", "Payment received", "₹1,500 from Mihir Joshi", 8],
   ];
 

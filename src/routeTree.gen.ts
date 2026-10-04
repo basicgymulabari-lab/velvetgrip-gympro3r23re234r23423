@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CeoRouteImport } from './routes/ceo'
 import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as InquiriesRouteImport } from './routes/inquiries'
 import { Route as LoginRouteImport } from './routes/login'
@@ -26,6 +27,11 @@ import { Route as MembersMemberIdRouteImport } from './routes/members.$memberId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CeoRoute = CeoRouteImport.update({
+  id: '/ceo',
+  path: '/ceo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExpensesRoute = ExpensesRouteImport.update({
@@ -91,6 +97,7 @@ const MembersMemberIdRoute = MembersMemberIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ceo': typeof CeoRoute
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ceo': typeof CeoRoute
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -122,6 +130,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ceo': typeof CeoRoute
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/ceo'
     | '/expenses'
     | '/inquiries'
     | '/login'
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/ceo'
     | '/expenses'
     | '/inquiries'
     | '/login'
@@ -169,6 +180,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/ceo'
     | '/expenses'
     | '/inquiries'
     | '/login'
@@ -185,6 +197,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CeoRoute: typeof CeoRoute
   ExpensesRoute: typeof ExpensesRoute
   InquiriesRoute: typeof InquiriesRoute
   LoginRoute: typeof LoginRoute
@@ -206,6 +219,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ceo': {
+      id: '/ceo'
+      path: '/ceo'
+      fullPath: '/ceo'
+      preLoaderRoute: typeof CeoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/expenses': {
@@ -297,6 +317,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CeoRoute: CeoRoute,
   ExpensesRoute: ExpensesRoute,
   InquiriesRoute: InquiriesRoute,
   LoginRoute: LoginRoute,

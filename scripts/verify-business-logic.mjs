@@ -145,15 +145,18 @@ try {
     assert(selectors.totalDue(state) >= 0);
   };
 
-  assert.equal(
-    store.setupTemplateData(),
-    false,
-    "free workspaces must not load a template containing more than 10 active members",
-  );
+  assert.equal(await store.setupTemplateData(), true, "free workspaces can load starter template data");
   let state = store.getState();
+  assert.equal(state.members.length, 10, "free starter data stays within the included roster");
   assertIntegrity(state);
   assert(state.expenses.length > 0, "starter data must exercise expense reporting");
   assert.equal(selectors.rangeWindow("monthly").start.getDate(), 1);
+  billing.activateLocalPro(30);
+  assert.equal(await store.setupTemplateData(), true, "Pro workspaces can load the full template");
+  assert.equal(store.getState().members.length, 16);
+  billing.resetLocalPro();
+  store.__setStateForLogicTests(demoState);
+  state = store.getState();
   store.updateSettings({ calendarSystem: "bikram_sambat" });
   assert.equal(selectors.shortDate(new Date(2026, 8, 2)), "17 Bhadra 2083");
   assert.equal(calendar.localDateInput(calendar.fromNepaliDate(2083, 4, 17)), "2026-09-02");
@@ -181,8 +184,8 @@ try {
   );
   assert.equal(store.getState().members.length, blockedMemberCount);
 
-  // Bring the seeded demo down to nine active gym members so the normal
-  // add-member business-logic checks below can exercise the final free slot.
+  // Bring the seeded demo down to nine active gym members so normal add-member
+  // checks can exercise the final free slot.
   state.members
     .filter((member) => !member.deletedAt && member.type !== "walk_in")
     .slice(0, 7)
@@ -521,14 +524,10 @@ try {
     assert.equal(state[key].length, 0, `${key} must be empty after reset`);
   }
   assert.equal(state.invoiceSeq, 0);
-  assert.equal(
-    store.setupTemplateData(),
-    false,
-    "free workspaces must not bypass the member allowance through template data",
-  );
+  assert.equal(await store.setupTemplateData(), true, "free workspace can set up starter data after reset");
   state = store.getState();
   assert.deepEqual(state.settings, settingsBeforeReset);
-  assert.equal(state.members.length, 0);
+  assert.equal(state.members.length, 10);
   assertIntegrity(state);
   store.restoreBackup(backup);
   assert.equal(

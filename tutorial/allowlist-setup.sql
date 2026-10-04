@@ -1,0 +1,7 @@
+-- The former one-off allowlist script has been replaced by the CEO Hub migration:
+-- supabase/migrations/20261004170000_ceo_hub.sql
+--
+-- Apply that migration through the project's normal Supabase migration workflow,
+-- then enable Authentication > Hooks > Before User Created and select
+-- public.iv_before_user_created. Manage invites from the owner-only /ceo page.
+-- Do not run this file as a standalone SQL setup script.

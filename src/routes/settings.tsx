@@ -116,6 +116,7 @@ function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [form, setForm] = useState<Record<string, string> | null>(null);
   const [receptionistDraft, setReceptionistDraft] = useState<{
@@ -474,7 +475,6 @@ function SettingsPage() {
               {subscription.active ? "Extend Pro" : "Upgrade to Pro"}
             </Button>
           </div>
-
         </Panel>
 
         <Panel
@@ -827,7 +827,9 @@ function SettingsPage() {
                 } catch (error) {
                   setSavingReceptionist(false);
                   return setReceptionistError(
-                    error instanceof Error ? error.message : "Could not save the receptionist account.",
+                    error instanceof Error
+                      ? error.message
+                      : "Could not save the receptionist account.",
                   );
                 }
                 setSavingReceptionist(false);
@@ -921,8 +923,7 @@ function SettingsPage() {
                   aria-label="Copy receptionist email"
                   title="Copy email"
                   onClick={async () => {
-                    const email =
-                      savedReceptionistEmail ?? state.staff?.receptionist?.email ?? "";
+                    const email = savedReceptionistEmail ?? state.staff?.receptionist?.email ?? "";
                     if (!email) return;
                     try {
                       await navigator.clipboard.writeText(email);
@@ -1012,20 +1013,25 @@ function SettingsPage() {
                 Cancel
               </Button>
               <Button
-                onClick={() => {
-                  if (!setupTemplateData()) {
+                disabled={templateBusy}
+                onClick={async () => {
+                  setTemplateBusy(true);
+                  try {
+                    await setupTemplateData();
                     setTemplateOpen(false);
-                    openSubscriptionPaywall("member-limit");
-                    toast.info(
-                      "The full template contains more than 10 members. Activate Pro first.",
+                    toast.success("Template data set up and saved successfully");
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Template data could not be saved. Please try again.",
                     );
-                    return;
+                  } finally {
+                    setTemplateBusy(false);
                   }
-                  setTemplateOpen(false);
-                  toast.success("Template data set up successfully");
                 }}
               >
-                Set Up Template Data
+                {templateBusy ? "Setting up…" : "Set Up Template Data"}
               </Button>
             </div>
           </div>

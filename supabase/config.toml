@@ -38,6 +38,13 @@ enable_confirmations = true
 max_frequency = "1m0s"
 otp_length = 8
 
+[auth.email.smtp]
+sender_name = "IRONVAULT"
+
+[auth.email.template.confirmation]
+subject = "Confirm your IRONVAULT gym account"
+content_path = "./supabase/templates/confirmation.html"
+
 [auth.external.google]
 client_id = "456317071655-f0ejauvmsqn3p1g07uokn11ekequ37jo.apps.googleusercontent.com"
 enabled = true
