@@ -227,6 +227,8 @@ export type Database = {
           valid_until: string | null;
           redeemed_by: string | null;
           redeemed_at: string | null;
+          revoked_at: string | null;
+          created_by: string | null;
           created_at: string;
         };
         Insert: {
@@ -237,6 +239,8 @@ export type Database = {
           valid_until?: string | null;
           redeemed_by?: string | null;
           redeemed_at?: string | null;
+          revoked_at?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
         Update: {
@@ -247,6 +251,8 @@ export type Database = {
           valid_until?: string | null;
           redeemed_by?: string | null;
           redeemed_at?: string | null;
+          revoked_at?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
         Relationships: [];

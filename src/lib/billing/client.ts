@@ -264,6 +264,7 @@ export async function redeemRechargeCode(code: string) {
     if (error.message.includes("ALREADY_USED"))
       throw new Error("This recharge code has already been used.");
     if (error.message.includes("EXPIRED")) throw new Error("This recharge code has expired.");
+    if (error.message.includes("REVOKED")) throw new Error("This recharge code has been revoked.");
     if (error.message.includes("INVALID_RECHARGE_CODE"))
       throw new Error("That recharge code is not valid.");
     throw new Error("The recharge code could not be activated. Please try again.");

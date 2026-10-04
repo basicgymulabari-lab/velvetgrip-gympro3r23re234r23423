@@ -18,6 +18,9 @@ verify_jwt = true
 [functions.razorpay-webhook]
 verify_jwt = false
 
+[functions.recharge-codes]
+verify_jwt = true
+
 [functions.staff-receptionist]
 verify_jwt = true
 

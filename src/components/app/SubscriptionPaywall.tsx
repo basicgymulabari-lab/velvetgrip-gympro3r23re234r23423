@@ -159,9 +159,16 @@ export function SubscriptionPaywall({
     if (!code.trim()) return;
     setBusy("recharge");
     try {
-      await redeemRechargeCode(code);
+      const result = (await redeemRechargeCode(code)) as {
+        days_added?: number;
+        already_redeemed?: boolean;
+      } | null;
       setCode("");
-      toast.success("Recharge successful — Pro access is active for 30 days.");
+      toast.success(
+        result?.already_redeemed
+          ? "This code was already redeemed by your account; your current Pro access is unchanged."
+          : `Recharge successful — Pro access is active for ${result?.days_added ?? "the granted number of"} day${result?.days_added === 1 ? "" : "s"}.`,
+      );
       onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Recharge failed.");

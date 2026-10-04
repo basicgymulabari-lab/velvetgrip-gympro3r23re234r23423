@@ -1,5 +1,6 @@
 import { AccountSecurity } from "@/components/app/AccountSecurity";
 import { InvoiceDialog } from "@/components/app/InvoiceDialog";
+import { RechargeCodeManager } from "@/components/app/RechargeCodeManager";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -474,6 +475,8 @@ function SettingsPage() {
               {subscription.active ? "Extend Pro" : "Upgrade to Pro"}
             </Button>
           </div>
+
+          <RechargeCodeManager />
         </Panel>
 
         <Panel
