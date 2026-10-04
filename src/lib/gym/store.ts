@@ -259,6 +259,7 @@ export async function completeCloudLogin() {
     if (context.role === "owner") {
       const uploadedPaths: string[] = [];
       let migrated = false;
+      let saveAttempted = false;
       try {
         const members: Member[] = [];
         for (const member of state.members) {
@@ -306,16 +307,37 @@ export async function completeCloudLogin() {
         }
 
         if (migrated) {
-          state = { ...state, members, expenses };
-          cloudRevision = await saveCloudWorkspace(state, cloudRevision);
+          const migratedState = { ...state, members, expenses };
+          saveAttempted = true;
+          const nextRevision = await saveCloudWorkspace(migratedState, cloudRevision);
+          state = migratedState;
+          cloudRevision = nextRevision;
         }
       } catch (error) {
-        await Promise.all(uploadedPaths.map((path) => deletePrivateAsset(path).catch(() => undefined)));
-        throw new Error(
-          error instanceof Error
-            ? `Private file migration failed: ${error.message}`
-            : "Private file migration failed.",
-        );
+        if (saveAttempted) {
+          // A failed response can follow a successful server write. Refresh the
+          // revision before allowing subsequent edits, and keep uploaded files.
+          const latest = await loadCloudWorkspace().catch(() => null);
+          if (latest?.state?.version === 1) {
+            state = {
+              ...latest.state,
+              expenses: (latest.state.expenses ?? []).map((expense) => ({
+                ...expense,
+                locked: expense.locked !== false,
+              })),
+              inquiries: latest.state.inquiries ?? [],
+              staff: sanitizedStaff(latest.state.staff),
+            };
+            cloudRevision = latest.revision;
+            cloudGymId = latest.gymId;
+            configureCalendarSystem(state.settings.calendarSystem);
+          }
+        } else {
+          await Promise.all(uploadedPaths.map((path) => deletePrivateAsset(path).catch(() => undefined)));
+        }
+        // Legacy files remain available in the loaded workspace and migration
+        // can be retried at the next sign-in. It must not prevent gym access.
+        console.warn("Could not migrate legacy private files during sign-in", error);
       }
     }
   } else {
