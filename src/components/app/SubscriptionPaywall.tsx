@@ -362,7 +362,7 @@ export function SubscriptionPaywall({
               <KeyRound className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Have a 30-day recharge code?</p>
+              <p className="text-sm font-semibold">Have a recharge code?</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Enter the single-use scratch/recharge code supplied by IRONVAULT to extend Pro
                 access.

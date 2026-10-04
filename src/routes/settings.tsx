@@ -1,6 +1,5 @@
 import { AccountSecurity } from "@/components/app/AccountSecurity";
 import { InvoiceDialog } from "@/components/app/InvoiceDialog";
-import { RechargeCodeManager } from "@/components/app/RechargeCodeManager";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -423,7 +422,7 @@ function SettingsPage() {
               <p className="mt-1 text-xs capitalize text-muted-foreground">
                 {subscription.active && subscription.source
                   ? `Activated via ${subscription.source}`
-                  : "Pay with Razorpay, Stripe, or use a 30-day recharge code."}
+                  : "Use a recharge code, or pay online with Razorpay or Stripe."}
               </p>
             </div>
           </div>
@@ -476,7 +475,6 @@ function SettingsPage() {
             </Button>
           </div>
 
-          <RechargeCodeManager />
         </Panel>
 
         <Panel
