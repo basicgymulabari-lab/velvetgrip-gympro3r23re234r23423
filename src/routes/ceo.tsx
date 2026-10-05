@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { Dumbbell, LoaderCircle, LogOut, ShieldAlert } from "lucide-react";
 import { PlatformProManager } from "@/components/app/PlatformProManager";
 import { CeoOperations } from "@/components/app/CeoOperations";
@@ -21,6 +21,7 @@ export const Route = createFileRoute("/ceo")({
 
 function CeoPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [access, setAccess] = useState<AccessState>("checking");
   const [checking, setChecking] = useState(false);
 
@@ -62,6 +63,9 @@ function CeoPage() {
       setChecking(false);
     }
   };
+
+  // The demo is a child URL but a distinct, public sample-only experience.
+  if (location.pathname === "/ceo/demo") return <Outlet />;
 
   if (access !== "allowed") {
     const title =
@@ -106,9 +110,14 @@ function CeoPage() {
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
             {access === "signed-out" && (
-              <Button asChild>
-                <Link to="/login">Sign in</Link>
-              </Button>
+              <>
+                <Button asChild>
+                  <Link to="/login">Platform owner sign in</Link>
+                </Button>
+                <Button asChild variant="secondary">
+                  <a href="/ceo/demo">Explore demo</a>
+                </Button>
+              </>
             )}
             {(access === "unavailable" || access === "checking") && (
               <Button type="button" onClick={() => void checkAccess()} disabled={checking}>

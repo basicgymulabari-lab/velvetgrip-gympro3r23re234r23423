@@ -21,6 +21,7 @@ import { Route as ProductsRouteImport } from './routes/products'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TrashRouteImport } from './routes/trash'
+import { Route as CeoDemoRouteImport } from './routes/ceo.demo'
 import { Route as MembersIndexRouteImport } from './routes/members.index'
 import { Route as MembersMemberIdRouteImport } from './routes/members.$memberId'
 
@@ -84,6 +85,11 @@ const TrashRoute = TrashRouteImport.update({
   path: '/trash',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CeoDemoRoute = CeoDemoRouteImport.update({
+  id: '/demo',
+  path: '/demo',
+  getParentRoute: () => CeoRoute,
+} as any)
 const MembersIndexRoute = MembersIndexRouteImport.update({
   id: '/members/',
   path: '/members/',
@@ -97,7 +103,7 @@ const MembersMemberIdRoute = MembersMemberIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/ceo': typeof CeoRoute
+  '/ceo': typeof CeoRouteWithChildren
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -108,12 +114,13 @@ export interface FileRoutesByFullPath {
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
+  '/ceo/demo': typeof CeoDemoRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/ceo': typeof CeoRoute
+  '/ceo': typeof CeoRouteWithChildren
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -124,13 +131,14 @@ export interface FileRoutesByTo {
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
+  '/ceo/demo': typeof CeoDemoRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members': typeof MembersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/ceo': typeof CeoRoute
+  '/ceo': typeof CeoRouteWithChildren
   '/expenses': typeof ExpensesRoute
   '/inquiries': typeof InquiriesRoute
   '/login': typeof LoginRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/trash': typeof TrashRoute
+  '/ceo/demo': typeof CeoDemoRoute
   '/members/$memberId': typeof MembersMemberIdRoute
   '/members/': typeof MembersIndexRoute
 }
@@ -159,6 +168,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/trash'
+    | '/ceo/demo'
     | '/members/$memberId'
     | '/members/'
   fileRoutesByTo: FileRoutesByTo
@@ -175,6 +185,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/trash'
+    | '/ceo/demo'
     | '/members/$memberId'
     | '/members'
   id:
@@ -191,13 +202,14 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/trash'
+    | '/ceo/demo'
     | '/members/$memberId'
     | '/members/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CeoRoute: typeof CeoRoute
+  CeoRoute: typeof CeoRouteWithChildren
   ExpensesRoute: typeof ExpensesRoute
   InquiriesRoute: typeof InquiriesRoute
   LoginRoute: typeof LoginRoute
@@ -298,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TrashRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ceo/demo': {
+      id: '/ceo/demo'
+      path: '/demo'
+      fullPath: '/ceo/demo'
+      preLoaderRoute: typeof CeoDemoRouteImport
+      parentRoute: typeof CeoRoute
+    }
     '/members/': {
       id: '/members/'
       path: '/members'
@@ -315,9 +334,19 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface CeoRouteChildren {
+  CeoDemoRoute: typeof CeoDemoRoute
+}
+
+const CeoRouteChildren: CeoRouteChildren = {
+  CeoDemoRoute: CeoDemoRoute,
+}
+
+const CeoRouteWithChildren = CeoRoute._addFileChildren(CeoRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CeoRoute: CeoRoute,
+  CeoRoute: CeoRouteWithChildren,
   ExpensesRoute: ExpensesRoute,
   InquiriesRoute: InquiriesRoute,
   LoginRoute: LoginRoute,
