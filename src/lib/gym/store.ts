@@ -54,11 +54,6 @@ let cloudSaveQueue: Promise<void> = Promise.resolve();
 let cloudSyncPending = false;
 let onlineSyncInstalled = false;
 let currentSession: CurrentSession | null = null;
-const LOCAL_DEMO_SESSION_KEY = "ironvault.local-demo-session";
-const LOCAL_DEMO_STATE_KEY = "ironvault.local-demo-state";
-const localDemoEnabled = () =>
-  import.meta.env.DEV && import.meta.env.VITE_LOCAL_DEMO_MODE === "true";
-
 const isBrowser = () => typeof window !== "undefined";
 const normalizedPhone = (value: string) => {
   const digits = value.replace(/\D/g, "");
@@ -140,13 +135,6 @@ function emit() {
 function replaceState(nextState: GymState, syncCloud = true) {
   state = nextState;
   configureCalendarSystem(state.settings.calendarSystem);
-  if (localDemoEnabled() && currentSession?.email === "demo@ironvault.local") {
-    try {
-      window.localStorage.setItem(LOCAL_DEMO_STATE_KEY, JSON.stringify(state));
-    } catch (error) {
-      console.warn("Could not save local demo workspace", error);
-    }
-  }
   if (syncCloud) scheduleCloudSave(state);
   emit();
 }
@@ -230,7 +218,6 @@ export async function logoutSecurely() {
     await recordCloudAuditEvent("logout").catch(() => undefined);
   }
   await signOutFromCloud();
-  if (localDemoEnabled()) window.sessionStorage.removeItem(LOCAL_DEMO_SESSION_KEY);
   state = null;
   currentSession = null;
   cloudOwnerId = null;
@@ -395,53 +382,12 @@ export async function completeCloudLogin() {
   return true;
 }
 
-/** Start the isolated, seeded local demo account. It is available only in explicitly enabled dev mode. */
-export function startLocalDemoSession() {
-  if (!localDemoEnabled()) throw new Error("Local demo sign-in is disabled.");
-  let demoState: GymState | null = null;
-  try {
-    const saved = window.localStorage.getItem(LOCAL_DEMO_STATE_KEY);
-    if (saved) {
-      const parsed: unknown = JSON.parse(saved);
-      if (parsed && typeof parsed === "object" && (parsed as GymState).version === 1) {
-        demoState = parsed as GymState;
-      }
-    }
-  } catch {
-    demoState = null;
-  }
-  state = demoState ?? buildSeed();
-  state = {
-    ...state,
-    settings: {
-      ...state.settings,
-      gymName: "IronVault Demo Gym",
-      adminName: "Demo Owner",
-      email: "demo@ironvault.local",
-    },
-  };
-  window.localStorage.setItem(LOCAL_DEMO_STATE_KEY, JSON.stringify(state));
-  window.sessionStorage.setItem(LOCAL_DEMO_SESSION_KEY, "true");
-  currentSession = { email: "demo@ironvault.local", role: "admin", name: "Demo Owner" };
-  cloudOwnerId = null;
-  cloudGymId = null;
-  cloudRevision = null;
-  configureCalendarSystem(state.settings.calendarSystem);
-  emit();
-}
-
 export function isLoggedIn() {
   return currentSession !== null;
 }
 
 export async function validateCurrentSession() {
   if (!isBrowser()) return false;
-  if (localDemoEnabled()) {
-    if (window.sessionStorage.getItem(LOCAL_DEMO_SESSION_KEY) !== "true") return false;
-    if (currentSession?.email === "demo@ironvault.local" && state) return true;
-    startLocalDemoSession();
-    return true;
-  }
   if (!isSupabaseConfigured()) return false;
   if (!window.navigator.onLine && currentSession) {
     return Boolean(

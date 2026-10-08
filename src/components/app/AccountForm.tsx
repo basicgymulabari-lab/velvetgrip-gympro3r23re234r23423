@@ -2,12 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
-import {
-  completeCloudLogin,
-  getCurrentSession,
-  logoutSecurely,
-  startLocalDemoSession,
-} from "@/lib/gym/store";
+import { completeCloudLogin, getCurrentSession, logoutSecurely } from "@/lib/gym/store";
 import { signInWithGoogle } from "@/lib/gym/cloud";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +11,6 @@ import { Label } from "@/components/ui/label";
 type Mode = "signin" | "signup" | "forgot" | "reset";
 export function AccountForm() {
   const cloudAuthAvailable = isSupabaseConfigured();
-  const localDemoMode = import.meta.env.DEV && import.meta.env.VITE_LOCAL_DEMO_MODE === "true";
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("signin");
   const [staff, setStaff] = useState(false);
@@ -39,6 +33,13 @@ export function AccountForm() {
     let active = true;
     setChecking(true);
     setRestoreFailed(false);
+    // Remove the old development-only fake account and its cached sample data.
+    try {
+      window.sessionStorage.removeItem("ironvault.local-demo-session");
+      window.localStorage.removeItem("ironvault.local-demo-state");
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     recovering.current =
       fragment.get("type") === "recovery" ||
@@ -130,15 +131,6 @@ export function AccountForm() {
     event.preventDefault();
     await run(async () => {
       const normalized = email.trim().toLowerCase();
-      if (!cloudAuthAvailable && localDemoMode && mode === "signin") {
-        if (staff) throw new Error("The local demo includes the gym-owner account only.");
-        if (normalized !== "demo@ironvault.local" || password !== "DemoGym2026!") {
-          throw new Error("Use the demo email and password shown below.");
-        }
-        startLocalDemoSession();
-        await navigate({ to: "/", replace: true });
-        return;
-      }
       if (mode === "forgot") {
         if (!cloudAuthAvailable && staff) {
           setNotice(
@@ -357,7 +349,7 @@ export function AccountForm() {
               visible ? "text" : "password",
               "new-password",
             )}
-          {mode === "signin" && !localDemoMode && (
+          {mode === "signin" && (
             <button
               type="button"
               className="text-sm text-primary hover:underline"
@@ -435,7 +427,7 @@ export function AccountForm() {
           </Button>
         </fieldset>
       </form>
-      {mode !== "reset" && !localDemoMode && (
+      {mode !== "reset" && (
         <button
           type="button"
           disabled={busy || checking}
@@ -450,14 +442,8 @@ export function AccountForm() {
       )}
       {mode === "signin" && !cloudAuthAvailable && import.meta.env.DEV && (
         <p className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          {localDemoMode ? (
-            <>
-              Local demo mode — no Supabase connection. Email: <strong>demo@ironvault.local</strong>
-              {" "}Password: <strong>DemoGym2026!</strong>. Demo changes stay in this browser.
-            </>
-          ) : (
-            "Local development authentication is not enabled. Set up the local demo mode or configure cloud authentication."
-          )}
+          Supabase authentication is not configured for this local build. Connect the authentication
+          service to sign in or create an account.
         </p>
       )}
       {mode === "reset" && !recoverySession && (

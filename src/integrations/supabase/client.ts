@@ -16,7 +16,6 @@ function readSupabaseConfig() {
  * a cloned repository does not include private/local environment values.
  */
 export function isSupabaseConfigured() {
-  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_DEMO_MODE === "true") return false;
   const { url, publishableKey } = readSupabaseConfig();
   return Boolean(url && publishableKey);
 }

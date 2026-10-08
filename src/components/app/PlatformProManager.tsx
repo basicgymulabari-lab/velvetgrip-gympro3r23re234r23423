@@ -196,7 +196,7 @@ export function PlatformProManager() {
           p_days: duration,
         });
         if (error) throw error;
-        toast.success(`Pro access granted to ${pendingAction.owner.owner_email}.`);
+        toast.success(`Pro membership activated for ${pendingAction.owner.owner_email}.`);
       } else if (pendingAction.kind === "revoke-pro") {
         const { data, error } = await supabase.rpc("platform_revoke_pro", {
           p_gym_id: pendingAction.owner.gym_id,
@@ -229,8 +229,8 @@ export function PlatformProManager() {
 
   return (
     <Panel
-      title="Pro Access Manager"
-      description="Issue account-bound codes, grant or remove bonus access, and check expiry"
+      title="Gym memberships & Pro access"
+      description="Activate or revoke app membership, issue assigned codes, and track expiry"
       collapsible
     >
       <div className="mb-5 flex items-start gap-3 rounded-xl border border-success/30 bg-success/5 p-4 text-sm">
@@ -366,7 +366,7 @@ export function PlatformProManager() {
 
       <section className="mt-5 rounded-xl border border-border p-4">
         <h3 className="flex items-center gap-2 font-semibold">
-          <Users className="h-4 w-4 text-gold" /> Customer accounts
+          <Users className="h-4 w-4 text-gold" /> Gym memberships
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Remaining days are calculated from the server-side expiry. A direct grant starts or
@@ -420,7 +420,7 @@ export function PlatformProManager() {
                         setPendingAction({ kind: "grant", owner });
                       }}
                     >
-                      <BadgeCheck className="mr-1.5 h-3.5 w-3.5" /> Grant Pro
+                      <BadgeCheck className="mr-1.5 h-3.5 w-3.5" /> Activate membership
                     </Button>
                   )}
                 </div>
@@ -491,14 +491,14 @@ export function PlatformProManager() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {pendingAction?.kind === "grant"
-                ? "Grant Pro access now?"
+                ? "Activate Pro membership?"
                 : pendingAction?.kind === "revoke-pro"
                   ? "Revoke bonus Pro access?"
                   : "Revoke this unused code?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingAction?.kind === "grant"
-                ? `This immediately adds ${days || "0"} days to ${pendingAction.owner.owner_email}.`
+                ? `This activates Pro for ${days || "0"} days for ${pendingAction.owner.owner_email}. The change is saved to Supabase and appears in the live dashboard.`
                 : pendingAction?.kind === "revoke-pro"
                   ? `This removes active manual/recharge access for ${pendingAction.owner.owner_email}. A separately paid provider subscription, if any, will remain active.`
                   : `This permanently blocks the unused code assigned to ${pendingAction?.kind === "revoke-code" ? pendingAction.code.assigned_owner || "the first eligible account" : ""}. It cannot be undone.`}
@@ -514,7 +514,11 @@ export function PlatformProManager() {
               }}
             >
               {busy && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm change
+              {pendingAction?.kind === "grant"
+                ? "Activate membership"
+                : pendingAction?.kind === "revoke-pro"
+                  ? "Revoke Pro access"
+                  : "Revoke code"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

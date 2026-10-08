@@ -5,6 +5,8 @@ declare
   v_trigger_count integer;
   v_policy_count integer;
   v_definition text;
+  v_grant_pro_def text;
+  v_grant_pro_security_definer boolean;
 begin
   select c.relrowsecurity into v_rls
   from pg_class c
@@ -48,6 +50,19 @@ begin
     or v_definition ilike '%new.%'
     or v_definition ilike '%old.%' then
     raise exception 'Platform broadcast must contain refresh metadata only, not row values';
+  end if;
+
+  select pg_get_functiondef('public.platform_grant_manual_pro(uuid, integer)'::regprocedure),
+         p.prosecdef
+    into v_grant_pro_def, v_grant_pro_security_definer
+  from pg_proc p
+  where p.oid = 'public.platform_grant_manual_pro(uuid, integer)'::regprocedure;
+  if v_grant_pro_def not ilike '%iv_is_platform_admin%'
+    or v_grant_pro_def not ilike '%PLATFORM_ADMIN_REQUIRED%'
+    or v_grant_pro_security_definer is distinct from true
+    or not has_function_privilege('authenticated', 'public.platform_grant_manual_pro(uuid, integer)', 'EXECUTE')
+    or has_function_privilege('anon', 'public.platform_grant_manual_pro(uuid, integer)', 'EXECUTE') then
+    raise exception 'Membership activation must be a CEO-authorized authenticated database operation';
   end if;
 end;
 $$;

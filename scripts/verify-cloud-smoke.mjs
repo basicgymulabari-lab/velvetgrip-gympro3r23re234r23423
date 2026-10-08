@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
-const baseUrl = process.env.E2E_BASE_URL || "https://ironvault-gym.pages.dev";
+const baseUrl =
+  process.env.E2E_BASE_URL ||
+  "https://velvetgrip-gympro3r23re234r23423.basicgymulabari.workers.dev";
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 const pageErrors = [];
@@ -17,6 +19,18 @@ try {
   await page.locator("#account-password").waitFor();
   await page.getByRole("button", { name: "Sign in" }).waitFor();
 
+  await page.goto(`${baseUrl}/ceo`, { waitUntil: "networkidle" });
+  await page.getByRole("heading", { name: "CEO sign in" }).waitFor();
+  assert.equal(await page.getByText(/sample demo/i).count(), 0);
+  assert.equal(await page.getByText(/demo@ironvault\.local/i).count(), 0);
+
+  await page.goto(`${baseUrl}/ceo/demo`, { waitUntil: "networkidle" });
+  await page.waitForURL(/\/ceo(?:$|\?)/);
+  await page.getByRole("heading", { name: "CEO sign in" }).waitFor();
+  assert.equal(await page.getByText(/CEO Hub Demo|sample-only demo/i).count(), 0);
+  assert.equal(await page.getByText(/DemoOnly!2026/i).count(), 0);
+
+  await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Receptionist" }).click();
   assert.equal(
     await page.getByRole("button", { name: "Receptionist" }).getAttribute("aria-pressed"),

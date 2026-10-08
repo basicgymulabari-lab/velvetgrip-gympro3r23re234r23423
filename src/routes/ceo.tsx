@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowRight,
   BarChart3,
@@ -41,7 +41,6 @@ export const Route = createFileRoute("/ceo")({
 });
 
 function CeoPage() {
-  const location = useLocation();
   const [access, setAccess] = useState<AccessState>("checking");
   const [checking, setChecking] = useState(false);
   const [section, setSection] = useState<ConsoleSection>("dashboard");
@@ -161,9 +160,6 @@ function CeoPage() {
       setChecking(false);
     }
   };
-
-  // The demo is deliberately separate and sample-only; it never uses the admin session.
-  if (location.pathname === "/ceo/demo") return <Outlet />;
 
   if (access !== "allowed") {
     const unavailable = access === "unavailable";
@@ -338,12 +334,6 @@ function CeoPage() {
               <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-sm">
                 <Link className="text-muted-foreground hover:text-foreground" to="/login">
                   Gym workspace sign in
-                </Link>
-                <Link
-                  className="inline-flex items-center gap-1 text-gold hover:underline"
-                  to="/ceo/demo"
-                >
-                  View sample demo <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               </div>
               <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
