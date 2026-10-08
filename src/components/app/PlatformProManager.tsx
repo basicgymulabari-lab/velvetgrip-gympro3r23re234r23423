@@ -91,6 +91,7 @@ export function PlatformProManager() {
   const [busy, setBusy] = useState(false);
   const [ownerId, setOwnerId] = useState("");
   const [days, setDays] = useState("30");
+  const [membershipDays, setMembershipDays] = useState("30");
   const [validDays, setValidDays] = useState("14");
   const [label, setLabel] = useState("");
   const [newCode, setNewCode] = useState<NewCode | null>(null);
@@ -188,7 +189,7 @@ export function PlatformProManager() {
     setBusy(true);
     try {
       if (pendingAction.kind === "grant") {
-        const duration = Number(days);
+        const duration = Number(membershipDays);
         if (!Number.isInteger(duration) || duration < 1 || duration > 366)
           throw new Error("Choose a Pro duration from 1 to 366 days.");
         const { error } = await supabase.rpc("platform_grant_manual_pro", {
@@ -284,7 +285,7 @@ export function PlatformProManager() {
             </select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="pro-code-days">Pro days</Label>
+            <Label htmlFor="pro-code-days">Code duration (days)</Label>
             <Input
               id="pro-code-days"
               type="number"
@@ -365,13 +366,28 @@ export function PlatformProManager() {
       </section>
 
       <section className="mt-5 rounded-xl border border-border p-4">
-        <h3 className="flex items-center gap-2 font-semibold">
-          <Users className="h-4 w-4 text-gold" /> Gym memberships
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Remaining days are calculated from the server-side expiry. A direct grant starts or
-          extends access immediately.
-        </p>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 font-semibold">
+              <Users className="h-4 w-4 text-gold" /> Gym memberships
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Remaining days come from Supabase. Activating starts or extends access immediately.
+            </p>
+          </div>
+          <div className="w-full space-y-2 sm:w-48">
+            <Label htmlFor="membership-activation-days">Membership duration (days)</Label>
+            <Input
+              id="membership-activation-days"
+              type="number"
+              min={1}
+              max={366}
+              value={membershipDays}
+              onChange={(event) => setMembershipDays(event.target.value)}
+              disabled={busy}
+            />
+          </div>
+        </div>
         {owners.length ? (
           <div className="mt-3 space-y-2">
             {owners.map((owner) => (
@@ -498,7 +514,7 @@ export function PlatformProManager() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingAction?.kind === "grant"
-                ? `This activates Pro for ${days || "0"} days for ${pendingAction.owner.owner_email}. The change is saved to Supabase and appears in the live dashboard.`
+                ? `This activates Pro for ${membershipDays || "0"} days for ${pendingAction.owner.owner_email}. The change is saved to Supabase and appears in the live dashboard.`
                 : pendingAction?.kind === "revoke-pro"
                   ? `This removes active manual/recharge access for ${pendingAction.owner.owner_email}. A separately paid provider subscription, if any, will remain active.`
                   : `This permanently blocks the unused code assigned to ${pendingAction?.kind === "revoke-code" ? pendingAction.code.assigned_owner || "the first eligible account" : ""}. It cannot be undone.`}
