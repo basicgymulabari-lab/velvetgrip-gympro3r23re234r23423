@@ -17,6 +17,10 @@ import {
 import { PlatformProManager } from "@/components/app/PlatformProManager";
 import { CeoOperations } from "@/components/app/CeoOperations";
 import { CeoControlCenter } from "@/components/app/CeoControlCenter";
+import {
+  PlatformLiveStatus,
+  PlatformLiveUpdatesProvider,
+} from "@/components/app/PlatformLiveUpdates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,7 +84,9 @@ function CeoPage() {
     event.preventDefault();
     if (checking) return;
     if (!isSupabaseConfigured()) {
-      setFormError("CEO sign-in is unavailable because the cloud authentication service is not configured.");
+      setFormError(
+        "CEO sign-in is unavailable because the cloud authentication service is not configured.",
+      );
       return;
     }
     setChecking(true);
@@ -122,7 +128,9 @@ function CeoPage() {
       return;
     }
     if (!isSupabaseConfigured()) {
-      setFormError("Password recovery is unavailable because cloud authentication is not configured.");
+      setFormError(
+        "Password recovery is unavailable because cloud authentication is not configured.",
+      );
       return;
     }
     setChecking(true);
@@ -133,7 +141,9 @@ function CeoPage() {
         redirectTo: `${window.location.origin}/login`,
       });
       if (error) throw error;
-      setNotice("If this platform-owner account exists, a password-reset link will arrive by email.");
+      setNotice(
+        "If this platform-owner account exists, a password-reset link will arrive by email.",
+      );
     } catch {
       setFormError("A reset link could not be requested. Check the email and try again.");
     } finally {
@@ -188,19 +198,31 @@ function CeoPage() {
             </div>
 
             <div className="mt-8 grid gap-3 border-t border-border pt-5 text-sm text-muted-foreground sm:grid-cols-3 lg:mt-0">
-              <span className="flex items-center gap-2"><Building2 className="h-4 w-4 text-gold" /> Gym accounts</span>
-              <span className="flex items-center gap-2"><Users className="h-4 w-4 text-gold" /> Owner access</span>
-              <span className="flex items-center gap-2"><BarChart3 className="h-4 w-4 text-gold" /> Platform status</span>
+              <span className="flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-gold" /> Gym accounts
+              </span>
+              <span className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-gold" /> Owner access
+              </span>
+              <span className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-gold" /> Platform status
+              </span>
             </div>
           </section>
 
           <section className="flex items-center p-6 sm:p-10 lg:p-12">
             <div className="mx-auto w-full max-w-md">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-gold/30 bg-gold/10 text-gold">
-                {checkingAccess ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <KeyRound className="h-5 w-5" />}
+                {checkingAccess ? (
+                  <LoaderCircle className="h-5 w-5 animate-spin" />
+                ) : (
+                  <KeyRound className="h-5 w-5" />
+                )}
               </div>
               <p className="mt-6 text-xs uppercase tracking-[0.18em] text-gold">Private console</p>
-              <h2 className="mt-2 font-display text-3xl">{checkingAccess ? "Verifying access" : "CEO sign in"}</h2>
+              <h2 className="mt-2 font-display text-3xl">
+                {checkingAccess ? "Verifying access" : "CEO sign in"}
+              </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 {denied
                   ? "This account is not a platform administrator. Use the CEO account assigned by the platform owner."
@@ -210,19 +232,26 @@ function CeoPage() {
               </p>
 
               {formError && (
-                <div role="alert" className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <div
+                  role="alert"
+                  className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+                >
                   {formError}
                 </div>
               )}
               {notice && (
-                <div role="status" className="mt-5 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
+                <div
+                  role="status"
+                  className="mt-5 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success"
+                >
                   {notice}
                 </div>
               )}
 
               {checkingAccess ? (
                 <div className="mt-7 flex items-center gap-3 rounded-xl border border-border p-4 text-sm text-muted-foreground">
-                  <LoaderCircle className="h-4 w-4 animate-spin text-gold" /> Checking your secure platform permissions…
+                  <LoaderCircle className="h-4 w-4 animate-spin text-gold" /> Checking your secure
+                  platform permissions…
                 </div>
               ) : (
                 <form className="mt-7 space-y-5" onSubmit={(event) => void signIn(event)}>
@@ -265,39 +294,73 @@ function CeoPage() {
                         aria-label={showPassword ? "Hide password" : "Show password"}
                         disabled={checking}
                       >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
                       </button>
                     </div>
                     <div className="flex justify-end">
-                      <button type="button" className="text-sm text-gold hover:underline" onClick={() => void sendResetLink()} disabled={checking}>
+                      <button
+                        type="button"
+                        className="text-sm text-gold hover:underline"
+                        onClick={() => void sendResetLink()}
+                        disabled={checking}
+                      >
                         Forgot password?
                       </button>
                     </div>
                   </div>
 
-                  <Button className="w-full" type="submit" disabled={checking || !isSupabaseConfigured()}>
-                    {checking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                  <Button
+                    className="w-full"
+                    type="submit"
+                    disabled={checking || !isSupabaseConfigured()}
+                  >
+                    {checking ? (
+                      <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                    )}
                     Sign in to CEO console
                     {!checking && <ArrowRight className="ml-2 h-4 w-4" />}
                   </Button>
 
                   {!isSupabaseConfigured() && (
-                    <p className="text-sm text-destructive">Cloud authentication is not configured in this deployment.</p>
+                    <p className="text-sm text-destructive">
+                      Cloud authentication is not configured in this deployment.
+                    </p>
                   )}
                 </form>
               )}
 
               <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-sm">
-                <Link className="text-muted-foreground hover:text-foreground" to="/login">Gym workspace sign in</Link>
-                <Link className="inline-flex items-center gap-1 text-gold hover:underline" to="/ceo/demo">View sample demo <ArrowRight className="h-3.5 w-3.5" /></Link>
+                <Link className="text-muted-foreground hover:text-foreground" to="/login">
+                  Gym workspace sign in
+                </Link>
+                <Link
+                  className="inline-flex items-center gap-1 text-gold hover:underline"
+                  to="/ceo/demo"
+                >
+                  View sample demo <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
               </div>
               <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
                 <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
-                No CEO sign-up is available here. Platform access is checked by Supabase for every privileged action.
+                No CEO sign-up is available here. Platform access is checked by Supabase for every
+                privileged action.
               </p>
               {unavailable && (
-                <Button className="mt-5 w-full" type="button" variant="secondary" onClick={() => void checkAccess()} disabled={checking}>
-                  {checking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}Retry secure check
+                <Button
+                  className="mt-5 w-full"
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void checkAccess()}
+                  disabled={checking}
+                >
+                  {checking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}Retry
+                  secure check
                 </Button>
               )}
             </div>
@@ -308,60 +371,87 @@ function CeoPage() {
   }
 
   const sections: { id: ConsoleSection; label: string; description: string }[] = [
-    { id: "dashboard", label: "Dashboard & gyms", description: "Platform health, gym accounts, backups and audit" },
+    {
+      id: "dashboard",
+      label: "Dashboard & gyms",
+      description: "Platform health, gym accounts, backups and audit",
+    },
     { id: "invites", label: "Gym invitations", description: "Authorize new gym-owner accounts" },
-    { id: "subscriptions", label: "Subscriptions & codes", description: "Manage Pro access and one-time codes" },
+    {
+      id: "subscriptions",
+      label: "Subscriptions & codes",
+      description: "Manage Pro access and one-time codes",
+    },
   ];
 
   return (
-    <main className="min-h-screen bg-background px-4 py-6 sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5">
-          <div className="flex items-center gap-3 text-gold">
-            <span className="grid h-11 w-11 place-items-center rounded-xl border border-gold/30 bg-gold/10">
-              <ShieldCheck className="h-6 w-6" />
-            </span>
-            <div>
-              <p className="font-display tracking-[0.18em]">IRONVAULT PLATFORM</p>
-              <p className="text-xs text-muted-foreground">CEO Control Center · Company operations</p>
+    <PlatformLiveUpdatesProvider>
+      <main className="min-h-screen bg-background px-4 py-6 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-7xl">
+          <header className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5">
+            <div className="flex items-center gap-3 text-gold">
+              <span className="grid h-11 w-11 place-items-center rounded-xl border border-gold/30 bg-gold/10">
+                <ShieldCheck className="h-6 w-6" />
+              </span>
+              <div>
+                <p className="font-display tracking-[0.18em]">IRONVAULT PLATFORM</p>
+                <p className="text-xs text-muted-foreground">
+                  CEO Control Center · Company operations
+                </p>
+              </div>
             </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <PlatformLiveStatus />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void signOut()}
+                disabled={checking}
+              >
+                <LogOut className="mr-2 h-4 w-4" /> Sign out
+              </Button>
+            </div>
+          </header>
+
+          <div className="mb-6 rounded-2xl border border-gold/20 bg-[image:var(--gradient-surface)] p-5 sm:p-7">
+            <p className="text-xs uppercase tracking-[0.18em] text-gold">Platform administration</p>
+            <h1 className="mt-2 font-display text-3xl sm:text-4xl">Company operations</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              This is the separate operator console for all gym workspaces—not a gym’s
+              member-management dashboard.
+            </p>
           </div>
-          <Button type="button" variant="secondary" onClick={() => void signOut()} disabled={checking}>
-            <LogOut className="mr-2 h-4 w-4" /> Sign out
-          </Button>
-        </header>
 
-        <div className="mb-6 rounded-2xl border border-gold/20 bg-[image:var(--gradient-surface)] p-5 sm:p-7">
-          <p className="text-xs uppercase tracking-[0.18em] text-gold">Platform administration</p>
-          <h1 className="mt-2 font-display text-3xl sm:text-4xl">Company operations</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            This is the separate operator console for all gym workspaces—not a gym’s member-management dashboard.
-          </p>
+          <nav aria-label="Platform console sections" className="mb-6 grid gap-2 sm:grid-cols-3">
+            {sections.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSection(item.id)}
+                aria-current={section === item.id ? "page" : undefined}
+                className={`rounded-xl border p-4 text-left transition-colors ${section === item.id ? "border-gold/50 bg-gold/10" : "border-border bg-card hover:bg-secondary/30"}`}
+              >
+                <span
+                  className={`font-medium ${section === item.id ? "text-gold" : "text-foreground"}`}
+                >
+                  {item.label}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">{item.description}</span>
+              </button>
+            ))}
+          </nav>
+
+          {section === "dashboard" && <CeoControlCenter />}
+          {section === "invites" && <CeoOperations />}
+          {section === "subscriptions" && <PlatformProManager />}
+
+          <footer className="mt-8 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">
+            All company-level actions require a Supabase platform-admin role and are checked again
+            by the database. This console does not expose gym members’ individual management
+            screens.
+          </footer>
         </div>
-
-        <nav aria-label="Platform console sections" className="mb-6 grid gap-2 sm:grid-cols-3">
-          {sections.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setSection(item.id)}
-              aria-current={section === item.id ? "page" : undefined}
-              className={`rounded-xl border p-4 text-left transition-colors ${section === item.id ? "border-gold/50 bg-gold/10" : "border-border bg-card hover:bg-secondary/30"}`}
-            >
-              <span className={`font-medium ${section === item.id ? "text-gold" : "text-foreground"}`}>{item.label}</span>
-              <span className="mt-1 block text-xs text-muted-foreground">{item.description}</span>
-            </button>
-          ))}
-        </nav>
-
-        {section === "dashboard" && <CeoControlCenter />}
-        {section === "invites" && <CeoOperations />}
-        {section === "subscriptions" && <PlatformProManager />}
-
-        <footer className="mt-8 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">
-          All company-level actions require a Supabase platform-admin role and are checked again by the database. This console does not expose gym members’ individual management screens.
-        </footer>
-      </div>
-    </main>
+      </main>
+    </PlatformLiveUpdatesProvider>
   );
 }

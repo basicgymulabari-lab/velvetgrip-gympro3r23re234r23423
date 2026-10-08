@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
+import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
 
 type OwnerAccount = {
   gym_id: string;
@@ -81,6 +82,7 @@ function readableError(error: unknown, fallback: string) {
 }
 
 export function PlatformProManager() {
+  const { revision } = usePlatformLiveUpdates();
   const [adminChecked, setAdminChecked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [owners, setOwners] = useState<OwnerAccount[]>([]);
@@ -147,7 +149,7 @@ export function PlatformProManager() {
 
   useEffect(() => {
     if (isAdmin) void loadData();
-  }, [isAdmin, loadData]);
+  }, [isAdmin, loadData, revision]);
 
   const generateCode = async () => {
     if (!selectedOwner) return toast.error("There are no registered owner accounts yet.");

@@ -15,6 +15,7 @@ import { PageHeader, Panel } from "@/components/app/Panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
+import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
 
 type GymRow = {
   gym_id: string;
@@ -75,6 +76,7 @@ function metric(summary: Summary | null, name: string) {
 }
 
 export function CeoControlCenter() {
+  const { revision } = usePlatformLiveUpdates();
   const [view, setView] = useState<View>("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [gyms, setGyms] = useState<GymRow[]>([]);
@@ -149,16 +151,17 @@ export function CeoControlCenter() {
       250,
     );
     return () => window.clearTimeout(timer);
-  }, [loadGyms]);
+  }, [loadGyms, revision]);
 
   useEffect(() => {
     void loadSummary().catch(() => undefined);
-  }, [loadSummary]);
+    void loadAudit().catch(() => undefined);
+  }, [loadAudit, loadSummary, revision]);
 
   useEffect(() => {
     if (view === "backups")
       void loadBackups(selectedGym).catch(() => toast.error("Backup history could not be loaded."));
-  }, [loadBackups, selectedGym, view]);
+  }, [loadBackups, revision, selectedGym, view]);
 
   const selectedGymName = useMemo(
     () => gyms.find((gym) => gym.gym_id === selectedGym)?.gym_name ?? "",

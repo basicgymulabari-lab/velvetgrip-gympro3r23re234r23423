@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
 
 type Invite = {
   email: string;
@@ -34,6 +35,7 @@ function inviteError(error: { message?: string } | null) {
 }
 
 export function CeoOperations() {
+  const { revision } = usePlatformLiveUpdates();
   const [invites, setInvites] = useState<Invite[]>([]);
   const [email, setEmail] = useState("");
   const [gymName, setGymName] = useState("");
@@ -56,7 +58,7 @@ export function CeoOperations() {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, revision]);
 
   const addInvite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
