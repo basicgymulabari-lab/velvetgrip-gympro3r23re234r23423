@@ -1,5 +1,11 @@
 ﻿import { admin, consumeRateLimit, requireOwner, writeAudit } from "../_shared/auth.ts";
-import { errorResponse, HttpError, jsonResponse, optionsResponse, parseJson } from "../_shared/http.ts";
+import {
+  errorResponse,
+  HttpError,
+  jsonResponse,
+  optionsResponse,
+  parseJson,
+} from "../_shared/http.ts";
 
 const PERMISSION_KEYS = [
   "dashboard",
@@ -17,7 +23,10 @@ const PERMISSION_KEYS = [
 ] as const;
 
 function normalizePermissions(value: unknown) {
-  const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const input =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
   return Object.fromEntries(PERMISSION_KEYS.map((key) => [key, input[key] === true]));
 }
 
@@ -27,6 +36,41 @@ Deno.serve(async (request) => {
 
   try {
     const { user: owner, membership } = await requireOwner(request);
+    const { data: gym, error: gymStatusError } = await admin
+      .from("gyms")
+      .select("account_status")
+      .eq("id", membership.gym_id)
+      .maybeSingle();
+    if (gymStatusError || !gym)
+      throw new HttpError("Could not verify gym status.", 502, "GYM_STATUS_LOOKUP_FAILED");
+    if (gym.account_status !== "active")
+      throw new HttpError("This gym account is read-only.", 403, "GYM_ACCOUNT_READ_ONLY");
+    const { data: entitlement, error: entitlementError } = await admin
+      .from("subscription_entitlements")
+      .select("current_period_end,provider_period_end,recharge_period_end,manual_period_end")
+      .eq("gym_id", membership.gym_id)
+      .maybeSingle();
+    if (entitlementError)
+      throw new HttpError(
+        "Could not verify subscription status.",
+        502,
+        "SUBSCRIPTION_LOOKUP_FAILED",
+      );
+    const hasProHistory = Boolean(
+      entitlement?.provider_period_end ||
+      entitlement?.recharge_period_end ||
+      entitlement?.manual_period_end,
+    );
+    if (
+      hasProHistory &&
+      (!entitlement?.current_period_end || Date.parse(entitlement.current_period_end) <= Date.now())
+    ) {
+      throw new HttpError(
+        "Pro has expired. Renew before changing staff access.",
+        403,
+        "SUBSCRIPTION_EXPIRED_READ_ONLY",
+      );
+    }
     await consumeRateLimit("staff:receptionist-update", owner.id, 12, 60);
     const body = await parseJson<Record<string, unknown>>(request);
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -35,10 +79,22 @@ Deno.serve(async (request) => {
     const enabled = body.enabled !== false;
     const permissions = normalizePermissions(body.permissions);
 
-    if (name.length < 2 || name.length > 120) throw new HttpError("Enter a valid receptionist name.", 400, "INVALID_NAME");
-    if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 320) throw new HttpError("Enter a valid receptionist email.", 400, "INVALID_EMAIL");
-    if (password && password.length < 12) throw new HttpError("Receptionist passwords must be at least 12 characters.", 400, "WEAK_PASSWORD");
-    if (email === (owner.email ?? "").toLowerCase()) throw new HttpError("Use an email different from the gym owner account.", 400, "EMAIL_CONFLICT");
+    if (name.length < 2 || name.length > 120)
+      throw new HttpError("Enter a valid receptionist name.", 400, "INVALID_NAME");
+    if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 320)
+      throw new HttpError("Enter a valid receptionist email.", 400, "INVALID_EMAIL");
+    if (password && password.length < 12)
+      throw new HttpError(
+        "Receptionist passwords must be at least 12 characters.",
+        400,
+        "WEAK_PASSWORD",
+      );
+    if (email === (owner.email ?? "").toLowerCase())
+      throw new HttpError(
+        "Use an email different from the gym owner account.",
+        400,
+        "EMAIL_CONFLICT",
+      );
 
     const { data: existing, error: lookupError } = await admin
       .from("gym_users")
@@ -46,7 +102,8 @@ Deno.serve(async (request) => {
       .eq("gym_id", membership.gym_id)
       .eq("role", "receptionist")
       .maybeSingle();
-    if (lookupError) throw new HttpError("Could not load the receptionist account.", 502, "STAFF_LOOKUP_FAILED");
+    if (lookupError)
+      throw new HttpError("Could not load the receptionist account.", 502, "STAFF_LOOKUP_FAILED");
 
     let staffUserId = existing?.user_id ?? "";
     let createdUser = false;
@@ -63,9 +120,19 @@ Deno.serve(async (request) => {
       };
       if (password) attributes.password = password;
       const { error } = await admin.auth.admin.updateUserById(staffUserId, attributes);
-      if (error) throw new HttpError("Could not update the receptionist sign-in account.", 400, "STAFF_AUTH_UPDATE_FAILED");
+      if (error)
+        throw new HttpError(
+          "Could not update the receptionist sign-in account.",
+          400,
+          "STAFF_AUTH_UPDATE_FAILED",
+        );
     } else {
-      if (!password) throw new HttpError("Set a password when creating the receptionist account.", 400, "PASSWORD_REQUIRED");
+      if (!password)
+        throw new HttpError(
+          "Set a password when creating the receptionist account.",
+          400,
+          "PASSWORD_REQUIRED",
+        );
       const { data, error } = await admin.auth.admin.createUser({
         email,
         password,
@@ -100,7 +167,11 @@ Deno.serve(async (request) => {
     );
     if (membershipError) {
       if (createdUser) await admin.auth.admin.deleteUser(staffUserId).catch(() => undefined);
-      throw new HttpError("Could not save receptionist permissions.", 502, "STAFF_MEMBERSHIP_UPDATE_FAILED");
+      throw new HttpError(
+        "Could not save receptionist permissions.",
+        502,
+        "STAFF_MEMBERSHIP_UPDATE_FAILED",
+      );
     }
 
     await writeAudit({

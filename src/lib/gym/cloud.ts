@@ -12,6 +12,8 @@ export type CloudGymContext = {
   email: string;
   enabled: boolean;
   gymName: string;
+  accountStatus: "pending" | "active" | "suspended" | "archived";
+  subscriptionExpired: boolean;
 };
 
 export type CloudWorkspace = CloudGymContext & {
@@ -74,6 +76,13 @@ function contextFrom(value: unknown): CloudGymContext | null {
     email: typeof row.email === "string" ? row.email : "",
     enabled: row.enabled !== false,
     gymName: typeof row.gym_name === "string" ? row.gym_name : "My Gym",
+    accountStatus:
+      row.account_status === "pending" ||
+      row.account_status === "suspended" ||
+      row.account_status === "archived"
+        ? row.account_status
+        : "active",
+    subscriptionExpired: row.subscription_expired === true,
   };
 }
 

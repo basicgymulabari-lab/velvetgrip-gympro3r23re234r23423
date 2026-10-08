@@ -3,6 +3,7 @@ import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tansta
 import { Dumbbell, LoaderCircle, LogOut, ShieldAlert } from "lucide-react";
 import { PlatformProManager } from "@/components/app/PlatformProManager";
 import { CeoOperations } from "@/components/app/CeoOperations";
+import { CeoControlCenter } from "@/components/app/CeoControlCenter";
 import { Button } from "@/components/ui/button";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 
@@ -165,6 +166,7 @@ function CeoPage() {
             <LogOut className="mr-2 h-4 w-4" /> Sign out
           </Button>
         </header>
+        <CeoControlCenter />
         <CeoOperations />
         <div className="mt-6">
           <PlatformProManager />

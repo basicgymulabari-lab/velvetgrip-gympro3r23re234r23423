@@ -133,7 +133,8 @@ security definer
 set search_path = pg_catalog, public, auth
 as $$
 declare
-  v_gym public.gyms%rowtype;
+  v_gym_id uuid;
+  v_gym_name text;
   v_owner_email text;
   v_state jsonb;
   v_revision bigint;
@@ -141,8 +142,8 @@ declare
   v_admin uuid := auth.uid();
 begin
   if not public.iv_is_platform_admin() then raise exception 'PLATFORM_ADMIN_REQUIRED'; end if;
-  select g, coalesce(u.email, m.email), w.state, w.revision, w.updated_at
-    into v_gym, v_owner_email, v_state, v_revision, v_updated_at
+  select g.id, g.name, coalesce(u.email, m.email), w.state, w.revision, w.updated_at
+    into v_gym_id, v_gym_name, v_owner_email, v_state, v_revision, v_updated_at
   from public.gyms g
   join public.gym_users m on m.gym_id = g.id and m.user_id = g.owner_user_id and m.role = 'owner'
   left join auth.users u on u.id = m.user_id
@@ -152,13 +153,13 @@ begin
   if not found then raise exception 'GYM_NOT_FOUND'; end if;
 
   insert into public.audit_logs (gym_id, user_id, role, action, entity_type, entity_id, metadata)
-    values (p_gym_id, v_admin, 'system', 'platform_backup_exported', 'workspace', p_gym_id::text,
+     values (v_gym_id, v_admin, 'system', 'platform_backup_exported', 'workspace', v_gym_id::text,
       jsonb_build_object('workspace_revision', v_revision));
 
   return jsonb_build_object(
     'backup_version', 1,
     'exported_at', now(),
-    'gym', jsonb_build_object('id', v_gym.id, 'name', v_gym.name, 'owner_email', v_owner_email),
+    'gym', jsonb_build_object('id', v_gym_id, 'name', v_gym_name, 'owner_email', v_owner_email),
     'workspace', jsonb_build_object('revision', v_revision, 'updated_at', v_updated_at, 'state', v_state),
     'included', 'Gym workspace JSON data. Referenced private storage files are not embedded.'
   );

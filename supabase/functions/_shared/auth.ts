@@ -4,9 +4,7 @@ import { HttpError } from "./http.ts";
 const url = Deno.env.get("SUPABASE_URL") ?? "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const publicKey =
-  Deno.env.get("SUPABASE_ANON_KEY") ??
-  Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
-  "";
+  Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
 
 if (!url || !serviceKey || !publicKey) {
   throw new Error("Supabase Edge Function environment is not configured.");
@@ -43,19 +41,25 @@ export async function requireGymUser(request: Request) {
   });
   const { data, error } = await userClient.auth.getUser(token);
   const user = data.user;
-  if (error || !user) throw new HttpError("Your session has expired. Sign in again.", 401, "SESSION_EXPIRED");
+  if (error || !user)
+    throw new HttpError("Your session has expired. Sign in again.", 401, "SESSION_EXPIRED");
 
   const { data: membership, error: membershipError } = await admin
     .from("gym_users")
     .select("gym_id,user_id,role,display_name,email,enabled,permissions")
     .eq("user_id", user.id)
     .maybeSingle();
-  if (membershipError) throw new HttpError("Could not verify gym access.", 502, "GYM_LOOKUP_FAILED");
+  if (membershipError)
+    throw new HttpError("Could not verify gym access.", 502, "GYM_LOOKUP_FAILED");
   if (!membership || membership.enabled === false) {
     throw new HttpError("Your gym access is not active.", 403, "GYM_ACCESS_DENIED");
   }
   if (membership.role !== "owner" && membership.role !== "receptionist") {
-    throw new HttpError("This account is not authorized for the management application.", 403, "ROLE_DENIED");
+    throw new HttpError(
+      "This account is not authorized for the management application.",
+      403,
+      "ROLE_DENIED",
+    );
   }
 
   return {
@@ -80,7 +84,12 @@ export async function requireOwner(request: Request) {
   return context;
 }
 
-export async function consumeRateLimit(scope: string, subject: string, limit: number, windowSeconds: number) {
+export async function consumeRateLimit(
+  scope: string,
+  subject: string,
+  limit: number,
+  windowSeconds: number,
+) {
   const { data, error } = await admin.rpc("consume_api_rate_limit", {
     p_scope: scope,
     p_subject: subject,
@@ -91,7 +100,8 @@ export async function consumeRateLimit(scope: string, subject: string, limit: nu
     console.error("Rate limit RPC failed", error);
     throw new HttpError("Could not verify request limits.", 502, "RATE_LIMIT_FAILED");
   }
-  if (data !== true) throw new HttpError("Too many requests. Please try again shortly.", 429, "RATE_LIMITED");
+  if (data !== true)
+    throw new HttpError("Too many requests. Please try again shortly.", 429, "RATE_LIMITED");
 }
 
 export async function writeAudit(input: {

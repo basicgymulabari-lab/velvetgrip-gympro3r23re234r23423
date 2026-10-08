@@ -391,6 +391,87 @@ export type Database = {
         Args: { p_gym_id: string };
         Returns: Json;
       };
+      platform_dashboard_summary: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      platform_list_gyms: {
+        Args: { p_search?: string; p_status?: string; p_page?: number; p_page_size?: number };
+        Returns: {
+          gym_id: string;
+          gym_name: string;
+          owner_id: string;
+          owner_name: string;
+          owner_email: string;
+          account_status: string;
+          created_at: string;
+          last_activity_at: string;
+          member_count: number;
+          subscription_status: string;
+          subscription_source: string | null;
+          subscription_expires_at: string | null;
+          days_remaining: number;
+          total_count: number;
+        }[];
+      };
+      platform_set_gym_status: {
+        Args: { p_gym_id: string; p_status: string; p_note?: string };
+        Returns: Json;
+      };
+      platform_list_audit_logs: {
+        Args: { p_page?: number; p_page_size?: number };
+        Returns: {
+          id: number;
+          admin_email: string;
+          gym_id: string | null;
+          gym_name: string | null;
+          action: string;
+          result: string;
+          metadata: Json;
+          created_at: string;
+          total_count: number;
+        }[];
+      };
+      platform_create_gym_backup: {
+        Args: { p_gym_id: string };
+        Returns: Json;
+      };
+      platform_list_gym_backups: {
+        Args: { p_gym_id: string };
+        Returns: {
+          backup_id: string;
+          gym_id: string;
+          gym_name: string;
+          backup_type: string;
+          status: string;
+          size_bytes: number;
+          created_at: string;
+          created_by_email: string;
+        }[];
+      };
+      platform_download_gym_backup: {
+        Args: { p_backup_id: string };
+        Returns: Json;
+      };
+      platform_restore_gym_backup: {
+        Args: { p_backup_id: string; p_confirm_gym_name: string };
+        Returns: Json;
+      };
+      platform_invite_gym_owner: {
+        Args: { p_email: string; p_gym_name: string; p_note?: string };
+        Returns: Json;
+      };
+      platform_list_gym_invites: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          email: string;
+          gym_name: string;
+          note: string;
+          invited_at: string;
+          consumed_at: string | null;
+          revoked_at: string | null;
+        }[];
+      };
     };
     Enums: {
       [_ in never]: never;

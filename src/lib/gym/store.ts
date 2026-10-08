@@ -101,7 +101,9 @@ function flushCloudSave(nextState: GymState, notifyOnError = true): Promise<bool
       if (notifyOnError) {
         window.dispatchEvent(
           new CustomEvent("ironvault:cloud-sync-error", {
-            detail: { message: "Your latest change could not be saved. Check your connection and retry." },
+            detail: {
+              message: "Your latest change could not be saved. Check your connection and retry.",
+            },
           }),
         );
       }
@@ -151,6 +153,23 @@ function replaceState(nextState: GymState, syncCloud = true) {
 
 function setState(updater: (s: GymState) => GymState) {
   if (!state) throw new Error("Gym workspace is not loaded.");
+  if (
+    currentSession?.accountStatus === "suspended" ||
+    currentSession?.accountStatus === "archived" ||
+    currentSession?.accountStatus === "pending" ||
+    currentSession?.subscriptionExpired
+  ) {
+    const message =
+      currentSession.accountStatus === "suspended" || currentSession.accountStatus === "archived"
+        ? "This gym account is suspended. Your existing records are available in read-only mode."
+        : currentSession.accountStatus === "pending"
+          ? "This gym account is awaiting approval and is currently read-only."
+          : "Your Pro subscription has expired. Existing data is safe and available in read-only mode. Renew to make changes.";
+    if (isBrowser()) {
+      window.dispatchEvent(new CustomEvent("ironvault:cloud-sync-error", { detail: { message } }));
+    }
+    return;
+  }
   replaceState(updater(state));
 }
 
@@ -342,7 +361,9 @@ export async function completeCloudLogin() {
             configureCalendarSystem(state.settings.calendarSystem);
           }
         } else {
-          await Promise.all(uploadedPaths.map((path) => deletePrivateAsset(path).catch(() => undefined)));
+          await Promise.all(
+            uploadedPaths.map((path) => deletePrivateAsset(path).catch(() => undefined)),
+          );
         }
         // Legacy files remain available in the loaded workspace and migration
         // can be retried at the next sign-in. It must not prevent gym access.
@@ -364,6 +385,8 @@ export async function completeCloudLogin() {
     role,
     cloudUserId: identity.id,
     gymId: context.gymId,
+    accountStatus: context.accountStatus,
+    subscriptionExpired: context.subscriptionExpired,
     name: context.displayName || (role === "admin" ? identity.name : "Receptionist"),
     permissions,
   };
@@ -390,7 +413,12 @@ export function startLocalDemoSession() {
   state = demoState ?? buildSeed();
   state = {
     ...state,
-    settings: { ...state.settings, gymName: "IronVault Demo Gym", adminName: "Demo Owner", email: "demo@ironvault.local" },
+    settings: {
+      ...state.settings,
+      gymName: "IronVault Demo Gym",
+      adminName: "Demo Owner",
+      email: "demo@ironvault.local",
+    },
   };
   window.localStorage.setItem(LOCAL_DEMO_STATE_KEY, JSON.stringify(state));
   window.sessionStorage.setItem(LOCAL_DEMO_SESSION_KEY, "true");
@@ -418,9 +446,9 @@ export async function validateCurrentSession() {
   if (!window.navigator.onLine && currentSession) {
     return Boolean(
       state &&
-        cloudRevision !== null &&
-        cloudOwnerId === currentSession.cloudUserId &&
-        cloudGymId === currentSession.gymId,
+      cloudRevision !== null &&
+      cloudOwnerId === currentSession.cloudUserId &&
+      cloudGymId === currentSession.gymId,
     );
   }
   return completeCloudLogin();
@@ -432,6 +460,8 @@ export type CurrentSession = {
   name: string;
   cloudUserId?: string;
   gymId?: string;
+  accountStatus?: "pending" | "active" | "suspended" | "archived";
+  subscriptionExpired?: boolean;
   permissions?: ReceptionistPermissions;
 };
 
@@ -585,7 +615,10 @@ export function addMember(input: NewMemberInput) {
           startDate: iso(start),
           endDate: iso(end),
           price: normalizeMoney(plan.price),
-          discount: Math.min(Math.max(0, normalizeMoney(input.discount ?? 0)), normalizeMoney(plan.price)),
+          discount: Math.min(
+            Math.max(0, normalizeMoney(input.discount ?? 0)),
+            normalizeMoney(plan.price),
+          ),
           joiningFee: Math.max(0, normalizeMoney(input.joiningFee ?? plan.joiningFee ?? 1000)),
           frozen: false,
           createdAt: iso(new Date()),
@@ -749,7 +782,11 @@ export function addNote(memberId: string, title: string, note: string) {
   }));
 }
 
-export function updateNote(memberId: string, noteId: string, patch: { title: string; note: string }) {
+export function updateNote(
+  memberId: string,
+  noteId: string,
+  patch: { title: string; note: string },
+) {
   setState((st) => ({
     ...st,
     members: st.members.map((m) =>
@@ -1432,7 +1469,9 @@ export async function setupTemplateData() {
   if (cloudOwnerId && cloudRevision !== null && hadPendingCloudSave) {
     const saved = await flushCloudSave(previous, false);
     if (!saved) {
-      throw new Error("Your current changes could not be saved. Check your connection and try again.");
+      throw new Error(
+        "Your current changes could not be saved. Check your connection and try again.",
+      );
     }
   }
   if (state !== previous || cloudOwnerId !== ownerAtStart) {
@@ -1441,9 +1480,7 @@ export async function setupTemplateData() {
 
   // Free workspaces get a representative starter dataset within their roster
   // allowance. Pro workspaces retain the complete demo dataset.
-  const template = buildSeed(
-    getSubscriptionSnapshot().active ? undefined : FREE_MEMBER_LIMIT,
-  );
+  const template = buildSeed(getSubscriptionSnapshot().active ? undefined : FREE_MEMBER_LIMIT);
   const nextState: GymState = {
     ...template,
     auth: previous.auth,
@@ -1623,7 +1660,9 @@ export function addExpense(input: ExpenseInput) {
     );
   });
   if (expenseId)
-    auditCloud("expense_created", "expense", expenseId, { amount: Math.max(0, Math.round(input.amount)) });
+    auditCloud("expense_created", "expense", expenseId, {
+      amount: Math.max(0, Math.round(input.amount)),
+    });
 }
 
 export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
@@ -1636,7 +1675,8 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>) {
               ...e,
               ...patch,
               title: patch.title !== undefined ? patch.title.trim() : e.title,
-              amount: patch.amount !== undefined ? Math.max(0, normalizeMoney(patch.amount)) : e.amount,
+              amount:
+                patch.amount !== undefined ? Math.max(0, normalizeMoney(patch.amount)) : e.amount,
               notes: patch.notes !== undefined ? patch.notes.trim() : e.notes,
               attachment: patch.attachment !== undefined ? patch.attachment : e.attachment,
             }

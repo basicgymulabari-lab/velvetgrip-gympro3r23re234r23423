@@ -33,12 +33,16 @@ additional_redirect_urls = [
 ]
 site_url = "https://velvetgrip-gympro3r23re234r23423.basicgymulabari.workers.dev"
 
+[auth.hook.before_user_created]
+enabled = true
+uri = "pg-functions://postgres/public/iv_before_user_created"
+
 [auth.email]
 enable_confirmations = true
 max_frequency = "1m0s"
 otp_length = 8
 
-[auth.email.smtp]
+[inbucket]
 sender_name = "IRONVAULT"
 
 [auth.email.template.confirmation]

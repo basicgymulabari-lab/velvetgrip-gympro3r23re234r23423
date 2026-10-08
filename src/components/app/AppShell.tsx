@@ -71,6 +71,7 @@ const RECEPTIONIST_ROUTE_PERMISSION = {
 export function AppShell({ children }: { children: ReactNode }) {
   const state = useGym();
   const subscription = useSubscription();
+  const accessContext = getCurrentSession();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -103,7 +104,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     const handleSyncError = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
       toast.error(
-        detail?.message ?? "Your latest change could not be saved. Check your connection and retry.",
+        detail?.message ??
+          "Your latest change could not be saved. Check your connection and retry.",
       );
     };
     window.addEventListener("ironvault:cloud-sync-error", handleSyncError);
@@ -508,7 +510,31 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="px-4 py-6 sm:px-6 lg:px-8">
+          {(accessContext?.accountStatus === "suspended" ||
+            accessContext?.accountStatus === "archived" ||
+            accessContext?.accountStatus === "pending" ||
+            accessContext?.subscriptionExpired) && (
+            <section
+              role="status"
+              className="mb-5 rounded-xl border border-warning/35 bg-warning/5 px-4 py-3 text-sm leading-6"
+            >
+              <p className="font-semibold text-warning">
+                {accessContext.accountStatus === "suspended" ||
+                accessContext.accountStatus === "archived"
+                  ? "Gym account suspended — read-only access"
+                  : accessContext.accountStatus === "pending"
+                    ? "Gym account pending approval — read-only access"
+                    : "Pro subscription expired — read-only access"}
+              </p>
+              <p className="text-muted-foreground">
+                Your existing data remains available. Changes are blocked by the secure backend
+                until the account is reactivated or Pro access is renewed.
+              </p>
+            </section>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   );
