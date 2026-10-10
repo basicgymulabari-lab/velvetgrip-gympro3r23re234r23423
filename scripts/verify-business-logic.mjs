@@ -30,10 +30,18 @@ class MemoryStorage {
   }
 }
 
+globalThis.CustomEvent ??= class CustomEvent {
+  constructor(type, options = {}) {
+    this.type = type;
+    this.detail = options.detail;
+  }
+};
+
 globalThis.window = {
   localStorage: new MemoryStorage(),
   sessionStorage: new MemoryStorage(),
   navigator: { onLine: true },
+  dispatchEvent: () => true,
 };
 
 const vite = await createServer({
@@ -256,12 +264,12 @@ try {
       throw new Error("WORKSPACE_CONFLICT");
     },
   });
-  const originalConsoleError = console.error;
+  const failedLogoutConsoleError = console.error;
   console.error = () => {};
   try {
     await assert.rejects(store.setupTemplateData(), /Template data could not be saved/);
   } finally {
-    console.error = originalConsoleError;
+    console.error = failedLogoutConsoleError;
   }
   assert.equal(
     store.getState().products[0].name,
@@ -684,6 +692,37 @@ try {
     false,
   );
   assertIntegrity(state);
+
+  // Signing out must preserve the loaded workspace if its last change cannot
+  // be synced. The fake adapter ensures this regression test never contacts Supabase.
+  store.__setStateForLogicTests(buildSeed(10));
+  store.__setCloudWorkspaceIOForLogicTests({
+    ownerId: "logout-test-owner",
+    gymId: "logout-test-gym",
+    revision: 1,
+    load: async () => null,
+    save: async () => {
+      throw new Error("NETWORK_ERROR");
+    },
+  });
+  store.updateSettings({ gymName: "Unsynced logout test" });
+  const stateBeforeFailedLogout = structuredClone(store.getState());
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(
+      store.logoutSecurely(),
+      /could not be saved/i,
+      "logout must not succeed when a pending workspace change cannot be synced",
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(
+    store.getState(),
+    stateBeforeFailedLogout,
+    "failed logout must keep the workspace available for retry",
+  );
 
   console.log("Business logic verification passed.");
 } finally {

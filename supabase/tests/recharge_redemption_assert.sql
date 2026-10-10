@@ -62,14 +62,23 @@ begin
   select * into v_issued from public.platform_generate_recharge_code(
     '68000000-0000-0000-0000-000000000008', 7, 30, 'manager revoke regression'
   );
-  select id into v_code_id from public.recharge_codes
-    where code_hash = encode(digest(v_issued.code, 'sha256'), 'hex');
+  -- Inspect privileged code metadata through the same guarded RPC used by
+  -- the CEO console. The authenticated browser role must not read the table.
+  select code_id into v_code_id from public.platform_list_recharge_codes()
+    where batch_label = 'manager revoke regression'
+      and assigned_owner = 'qa-recharge-a@example.invalid'
+      and code_status = 'unused';
   if v_code_id is null or v_issued.target_email <> 'qa-recharge-a@example.invalid' then
     raise exception 'admin code was not generated for its selected account';
   end if;
   perform set_config('audit.manager_recharge_code', v_issued.code, true);
   perform public.platform_revoke_recharge_code(v_code_id);
-  if not exists (select 1 from public.recharge_codes where id = v_code_id and revoked_at is not null and revoked_by = auth.uid()) then
+  if not exists (
+    select 1 from public.platform_list_recharge_codes()
+    where code_id = v_code_id
+      and code_status = 'revoked'
+      and revoked_by = 'qa-recharge-a@example.invalid'
+  ) then
     raise exception 'unused recharge code was not revoked';
   end if;
 

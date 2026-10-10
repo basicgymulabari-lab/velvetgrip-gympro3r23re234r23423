@@ -290,13 +290,19 @@ export function logout() {
 
 // Wait for pending changes and revoke the cloud session before returning to login.
 export async function logoutSecurely() {
+  const hasPendingCloudSave = Boolean(cloudSaveTimer) || cloudSyncPending;
   if (cloudSaveTimer) {
     clearTimeout(cloudSaveTimer);
     cloudSaveTimer = null;
   }
-  if (cloudOwnerId && state && cloudRevision !== null) {
-    await flushCloudSave(state);
+  if (cloudOwnerId && state && cloudRevision !== null && hasPendingCloudSave) {
+    const saved = await flushCloudSave(state);
     await cloudSaveQueue;
+    if (!saved) {
+      throw new Error(
+        "Your latest gym changes could not be saved. Check your connection and try again before signing out.",
+      );
+    }
   }
   if (cloudOwnerId) {
     await recordCloudAuditEvent("logout").catch(() => undefined);
