@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveRestore,
   Building2,
@@ -8,10 +8,19 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Upload,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel } from "@/components/app/Panel";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
@@ -75,7 +84,11 @@ function metric(summary: Summary | null, name: string) {
   return typeof value === "number" ? value.toLocaleString("en-IN") : "—";
 }
 
-export function CeoControlCenter() {
+export function CeoControlCenter({
+  onNavigate,
+}: {
+  onNavigate: (section: "invites" | "subscriptions") => void;
+}) {
   const { revision } = usePlatformLiveUpdates();
   const [view, setView] = useState<View>("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -87,8 +100,14 @@ export function CeoControlCenter() {
   const [selectedGym, setSelectedGym] = useState("");
   const [backups, setBackups] = useState<Backup[]>([]);
   const [audit, setAudit] = useState<Audit[]>([]);
+  const [auditPage, setAuditPage] = useState(1);
+  const [totalAudit, setTotalAudit] = useState(0);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const auditRequest = useRef(0);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [restoreBackup, setRestoreBackup] = useState<Backup | null>(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState("");
   const pageSize = 25;
 
   const loadSummary = useCallback(async () => {
@@ -124,13 +143,22 @@ export function CeoControlCenter() {
   }, []);
 
   const loadAudit = useCallback(async () => {
-    const { data, error } = await supabase.rpc("platform_list_audit_logs", {
-      p_page: 1,
-      p_page_size: 50,
-    });
-    if (error) throw error;
-    setAudit((data ?? []) as Audit[]);
-  }, []);
+    const requestId = ++auditRequest.current;
+    setAuditLoading(true);
+    try {
+      const { data, error } = await supabase.rpc("platform_list_audit_logs", {
+        p_page: auditPage,
+        p_page_size: pageSize,
+      });
+      if (error) throw error;
+      if (requestId !== auditRequest.current) return;
+      const result = (data ?? []) as Audit[];
+      setAudit(result);
+      setTotalAudit(Number(result[0]?.total_count ?? 0));
+    } finally {
+      if (requestId === auditRequest.current) setAuditLoading(false);
+    }
+  }, [auditPage, pageSize]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -163,28 +191,55 @@ export function CeoControlCenter() {
       void loadBackups(selectedGym).catch(() => toast.error("Backup history could not be loaded."));
   }, [loadBackups, revision, selectedGym, view]);
 
+  useEffect(() => {
+    if (view === "overview" && auditPage !== 1) setAuditPage(1);
+  }, [auditPage, view]);
+
   const selectedGymName = useMemo(
     () => gyms.find((gym) => gym.gym_id === selectedGym)?.gym_name ?? "",
     [gyms, selectedGym],
   );
 
-  const setGymStatus = async (gym: GymRow) => {
+  const setGymStatus = async (
+    gym: GymRow,
+    requestedStatus?: "active" | "suspended" | "archived",
+  ) => {
     const next =
-      gym.account_status === "suspended" || gym.account_status === "pending"
+      requestedStatus ??
+      (gym.account_status === "suspended" ||
+      gym.account_status === "pending" ||
+      gym.account_status === "archived"
         ? "active"
-        : "suspended";
-    const note =
-      next === "suspended"
-        ? window.prompt(`Optional reason for suspending ${gym.gym_name}:`, "")
-        : "";
-    if (note === null) return;
+        : "suspended");
+    if (next === "active") {
+      const verb =
+        gym.account_status === "pending"
+          ? "Approve"
+          : gym.account_status === "archived"
+            ? "Restore"
+            : "Reactivate";
+      if (
+        !window.confirm(
+          `${verb} ${gym.gym_name}? This will allow the gym owner to use the workspace again.`,
+        )
+      )
+        return;
+    }
     if (
-      next === "active" &&
+      next === "archived" &&
       !window.confirm(
-        `${gym.account_status === "pending" ? "Approve" : "Reactivate"} ${gym.gym_name}?`,
+        `Archive ${gym.gym_name}? Its data will be preserved, but the owner will switch to read-only access. You can restore it later.`,
       )
     )
       return;
+    const note =
+      next === "suspended" || next === "archived"
+        ? window.prompt(
+            `${next === "archived" ? "Archive" : "Suspend"} ${gym.gym_name}. Enter an optional reason, then select OK to continue:`,
+            "",
+          )
+        : "";
+    if (note === null) return;
     setBusy(true);
     try {
       const { error } = await supabase.rpc("platform_set_gym_status", {
@@ -193,13 +248,17 @@ export function CeoControlCenter() {
         p_note: note,
       });
       if (error) throw error;
-      toast.success(
+      const successMessage =
         next === "active"
           ? gym.account_status === "pending"
             ? "Gym approved."
-            : "Gym reactivated."
-          : "Gym suspended. Its existing data remains readable.",
-      );
+            : gym.account_status === "archived"
+              ? "Gym restored."
+              : "Gym reactivated."
+          : next === "archived"
+            ? "Gym archived. Its data is preserved in read-only mode."
+            : "Gym suspended. Its existing data remains readable.";
+      toast.success(successMessage);
       await Promise.all([loadGyms(), loadSummary(), loadAudit()]);
     } catch {
       toast.error("The account status could not be changed.");
@@ -246,23 +305,40 @@ export function CeoControlCenter() {
     }
   };
 
+  const beginRestore = (backup: Backup) => {
+    // Backups are scoped by gym in the database; also reject stale UI rows if
+    // the selected gym changed while its history was loading.
+    if (backup.gym_id !== selectedGym) {
+      toast.error("That snapshot does not belong to the selected gym. Refresh the backup list.");
+      return;
+    }
+    setRestoreConfirmation("");
+    setRestoreBackup(backup);
+  };
+
   const restore = async (backup: Backup) => {
-    if (!selectedGym) return;
-    const confirmation = window.prompt(
-      `This replaces the current workspace with backup from ${date(backup.created_at)}. A pre-restore snapshot will be created first. Type the gym name exactly to continue:`,
-    );
-    if (confirmation !== selectedGymName) return;
+    if (
+      !selectedGym ||
+      !selectedGymName ||
+      backup.gym_id !== selectedGym ||
+      restoreConfirmation !== selectedGymName
+    ) {
+      toast.error("Type the selected gym name exactly to push this snapshot.");
+      return;
+    }
     setBusy(true);
     try {
       const { error } = await supabase.rpc("platform_restore_gym_backup", {
         p_backup_id: backup.backup_id,
-        p_confirm_gym_name: confirmation,
+        p_confirm_gym_name: restoreConfirmation,
       });
       if (error) throw error;
-      toast.success("Restore completed. A pre-restore snapshot is available in history.");
+      setRestoreBackup(null);
+      setRestoreConfirmation("");
+      toast.success("Snapshot pushed to the gym. A pre-push snapshot is available in history.");
       await Promise.all([loadBackups(selectedGym), loadGyms(), loadAudit()]);
     } catch {
-      toast.error("Restore failed. The database transaction was rolled back.");
+      toast.error("Push failed. The database transaction was rolled back; no partial restore was applied.");
     } finally {
       setBusy(false);
     }
@@ -350,6 +426,52 @@ export function CeoControlCenter() {
               records in each gym workspace.
             </p>
           </Panel>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Panel title="Quick actions" description="Common platform-owner tasks">
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => setView("gyms")}>
+                  <Building2 className="mr-2 h-4 w-4" /> Open gym directory
+                </Button>
+                <Button variant="secondary" onClick={() => onNavigate("invites")}>
+                  Invite a gym owner
+                </Button>
+                <Button variant="secondary" onClick={() => onNavigate("subscriptions")}>
+                  Manage Pro access
+                </Button>
+              </div>
+            </Panel>
+            <Panel
+              title="Recent platform activity"
+              description="Latest security-sensitive account and subscription changes"
+              actions={
+                <Button variant="ghost" size="sm" onClick={() => setView("audit")}>
+                  Full audit log
+                </Button>
+              }
+            >
+              <div className="space-y-2">
+                {audit.slice(0, 5).map((event) => (
+                  <div
+                    key={event.id}
+                    className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <p className="font-medium capitalize">{event.action.replaceAll("_", " ")}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {event.admin_email} · {event.gym_name ?? "Platform"} · {event.result}
+                      </p>
+                    </div>
+                    <time className="text-xs text-muted-foreground">{date(event.created_at)}</time>
+                  </div>
+                ))}
+                {audit.length === 0 && (
+                  <p className="rounded-lg bg-secondary/15 p-4 text-sm text-muted-foreground">
+                    No platform activity has been recorded yet.
+                  </p>
+                )}
+              </div>
+            </Panel>
+          </div>
         </>
       )}
 
@@ -423,22 +545,42 @@ export function CeoControlCenter() {
                     </td>
                     <td className="py-3 pr-3">{date(gym.last_activity_at)}</td>
                     <td className="py-3">
-                      <Button
-                        size="sm"
-                        variant={
-                          gym.account_status === "suspended" || gym.account_status === "pending"
-                            ? "secondary"
-                            : "destructive"
-                        }
-                        disabled={busy || gym.account_status === "archived"}
-                        onClick={() => void setGymStatus(gym)}
-                      >
-                        {gym.account_status === "pending"
-                          ? "Approve"
-                          : gym.account_status === "suspended"
-                            ? "Reactivate"
-                            : "Suspend"}
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setSelectedGym(gym.gym_id);
+                            setView("backups");
+                          }}
+                        >
+                          Backups
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={gym.account_status === "active" ? "destructive" : "secondary"}
+                          disabled={busy}
+                          onClick={() => void setGymStatus(gym)}
+                        >
+                          {gym.account_status === "pending"
+                            ? "Approve"
+                            : gym.account_status === "archived"
+                              ? "Restore"
+                              : gym.account_status === "suspended"
+                                ? "Reactivate"
+                                : "Suspend"}
+                        </Button>
+                        {gym.account_status === "suspended" && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={busy}
+                            onClick={() => void setGymStatus(gym, "archived")}
+                          >
+                            Archive
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -479,7 +621,7 @@ export function CeoControlCenter() {
       {view === "backups" && (
         <Panel
           title="Backup and restore center"
-          description="Snapshots are private database records; restores are transactional and first take a pre-restore snapshot."
+          description="Save private snapshots, download them, or push one back into its gym. Every push first saves the gym’s current data as a safety snapshot."
         >
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="space-y-2 text-sm font-medium">
@@ -511,7 +653,7 @@ export function CeoControlCenter() {
                   <p className="font-medium">
                     {backup.gym_name} ·{" "}
                     {backup.backup_type === "pre_restore"
-                      ? "Pre-restore snapshot"
+                      ? "Safety snapshot (before push)"
                       : "Manual snapshot"}
                   </p>
                   <p className="text-xs text-muted-foreground">
@@ -534,9 +676,10 @@ export function CeoControlCenter() {
                       variant="destructive"
                       size="sm"
                       disabled={busy}
-                      onClick={() => void restore(backup)}
+                      onClick={() => beginRestore(backup)}
                     >
-                      Restore…
+                      <Upload className="mr-1 h-3.5 w-3.5" />
+                      Push to gym…
                     </Button>
                   )}
                 </div>
@@ -556,10 +699,72 @@ export function CeoControlCenter() {
         </Panel>
       )}
 
+      <AlertDialog
+        open={restoreBackup !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            setRestoreBackup(null);
+            setRestoreConfirmation("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Push this snapshot to the gym?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {restoreBackup && (
+                <>
+                  This replaces the current workspace for <strong>{selectedGymName}</strong> with
+                  the snapshot from {date(restoreBackup.created_at)}. The current workspace will be
+                  saved as a pre-push snapshot first, and the database applies the change as one
+                  transaction. This cannot be undone except by pushing a saved snapshot back.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="space-y-2 text-sm font-medium">
+            Type <span className="font-semibold">{selectedGymName}</span> to confirm
+            <Input
+              autoComplete="off"
+              value={restoreConfirmation}
+              onChange={(event) => setRestoreConfirmation(event.target.value)}
+              disabled={busy}
+              aria-label="Type the gym name to confirm snapshot push"
+            />
+          </label>
+          <AlertDialogFooter>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                setRestoreBackup(null);
+                setRestoreConfirmation("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={
+                busy ||
+                !restoreBackup ||
+                !selectedGymName ||
+                restoreBackup.gym_id !== selectedGym ||
+                restoreConfirmation !== selectedGymName
+              }
+              onClick={() => restoreBackup && void restore(restoreBackup)}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              {busy ? "Pushing…" : "Push snapshot"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {view === "audit" && (
         <Panel
           title="Platform audit log"
-          description="Recent sensitive CEO and subscription/key events. Latest 50 entries."
+          description="Security-sensitive CEO and subscription/key events, newest first."
         >
           <div className="space-y-2">
             {audit.map((event) => (
@@ -572,6 +777,14 @@ export function CeoControlCenter() {
                   <p className="text-xs text-muted-foreground">
                     {event.admin_email} · {event.gym_name ?? "Platform"} · {event.result}
                   </p>
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="w-fit cursor-pointer select-none hover:text-foreground">
+                      Event details
+                    </summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-secondary/20 p-3 font-mono text-[11px]">
+                      {JSON.stringify(event.metadata ?? {}, null, 2)}
+                    </pre>
+                  </details>
                 </div>
                 <time className="text-xs text-muted-foreground">{date(event.created_at)}</time>
               </article>
@@ -581,6 +794,31 @@ export function CeoControlCenter() {
                 No audit events have been recorded.
               </p>
             )}
+          </div>
+          <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-sm">
+            <span className="text-muted-foreground">
+              {auditLoading
+                ? "Loading activity…"
+                : `Page ${auditPage} of ${Math.max(1, Math.ceil(totalAudit / pageSize))} · ${totalAudit.toLocaleString("en-IN")} events`}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={auditPage <= 1 || auditLoading}
+                onClick={() => setAuditPage((current) => current - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={auditPage >= Math.ceil(totalAudit / pageSize) || auditLoading}
+                onClick={() => setAuditPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </Panel>
       )}

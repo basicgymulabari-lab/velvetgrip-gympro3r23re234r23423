@@ -33,6 +33,7 @@ class MemoryStorage {
 globalThis.window = {
   localStorage: new MemoryStorage(),
   sessionStorage: new MemoryStorage(),
+  navigator: { onLine: true },
 };
 
 const vite = await createServer({
@@ -145,7 +146,11 @@ try {
     assert(selectors.totalDue(state) >= 0);
   };
 
-  assert.equal(await store.setupTemplateData(), true, "free workspaces can load starter template data");
+  assert.equal(
+    await store.setupTemplateData(),
+    true,
+    "free workspaces can load starter template data",
+  );
   let state = store.getState();
   assert.equal(state.members.length, 10, "free starter data stays within the included roster");
   assertIntegrity(state);
@@ -155,6 +160,115 @@ try {
   assert.equal(await store.setupTemplateData(), true, "Pro workspaces can load the full template");
   assert.equal(store.getState().members.length, 16);
   billing.resetLocalPro();
+
+  // Exercise the cloud-backed template path against an isolated fake Supabase
+  // workspace whose revision has advanced in another tab/device.
+  store.__setStateForLogicTests(buildSeed(10));
+  let remoteState = newWorkspace("cloud-owner@example.com", "Cloud Owner", "Latest Cloud Gym");
+  let remoteRevision = 12;
+  const cloudContext = {
+    gymId: "test-gym",
+    role: "owner",
+    permissions: {},
+    displayName: "Cloud Owner",
+    email: "cloud-owner@example.com",
+    enabled: true,
+    gymName: "Latest Cloud Gym",
+    accountStatus: "active",
+    subscriptionExpired: false,
+  };
+  store.__setCloudWorkspaceIOForLogicTests({
+    ownerId: "test-owner",
+    gymId: cloudContext.gymId,
+    revision: 10,
+    load: async () => ({
+      ...cloudContext,
+      state: structuredClone(remoteState),
+      revision: remoteRevision,
+    }),
+    save: async (nextState, expectedRevision) => {
+      assert.equal(
+        expectedRevision,
+        remoteRevision,
+        "template save must use the latest cloud revision",
+      );
+      remoteState = structuredClone(nextState);
+      return ++remoteRevision;
+    },
+  });
+  assert.equal(
+    await store.setupTemplateData(),
+    true,
+    "stale clients refresh before setting up templates",
+  );
+  assert.equal(remoteState.members.length, 10);
+  assert.equal(
+    remoteState.settings.gymName,
+    "Latest Cloud Gym",
+    "cloud gym settings survive template setup",
+  );
+  assert.equal(store.getState().members.length, 10);
+
+  remoteState = structuredClone(remoteState);
+  remoteState.products[0].name = "Updated from another tab";
+  remoteRevision += 1;
+  assert.equal(
+    await store.refreshCloudWorkspaceIfNewer(),
+    true,
+    "open gym views pull newer cloud revisions",
+  );
+  assert.equal(store.getState().products[0].name, "Updated from another tab");
+  assert.equal(
+    await store.refreshCloudWorkspaceIfNewer(),
+    false,
+    "an already-current view does not reload",
+  );
+
+  store.__setStateForLogicTests(buildSeed(10));
+  remoteState = newWorkspace("cloud-owner@example.com", "Cloud Owner", "Latest Cloud Gym");
+  remoteState.products = [
+    {
+      id: "existing-product",
+      name: "Existing cloud product",
+      category: "Supplements",
+      sku: "EXISTING-1",
+      cost: 10,
+      price: 20,
+      stock: 1,
+      lowStockAt: 0,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  remoteRevision = 20;
+  store.__setCloudWorkspaceIOForLogicTests({
+    ownerId: "test-owner",
+    gymId: cloudContext.gymId,
+    revision: remoteRevision,
+    load: async () => ({
+      ...cloudContext,
+      state: structuredClone(remoteState),
+      revision: remoteRevision,
+    }),
+    save: async () => {
+      remoteState = structuredClone(remoteState);
+      remoteState.products[0].name = "Newer product from another tab";
+      remoteRevision += 1;
+      throw new Error("WORKSPACE_CONFLICT");
+    },
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(store.setupTemplateData(), /Template data could not be saved/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.equal(
+    store.getState().products[0].name,
+    "Newer product from another tab",
+    "a conflicting template save restores the latest cloud data instead of leaving a blank workspace",
+  );
+
   store.__setStateForLogicTests(demoState);
   state = store.getState();
   store.updateSettings({ calendarSystem: "bikram_sambat" });
@@ -524,7 +638,11 @@ try {
     assert.equal(state[key].length, 0, `${key} must be empty after reset`);
   }
   assert.equal(state.invoiceSeq, 0);
-  assert.equal(await store.setupTemplateData(), true, "free workspace can set up starter data after reset");
+  assert.equal(
+    await store.setupTemplateData(),
+    true,
+    "free workspace can set up starter data after reset",
+  );
   state = store.getState();
   assert.deepEqual(state.settings, settingsBeforeReset);
   assert.equal(state.members.length, 10);

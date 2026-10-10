@@ -5,6 +5,16 @@ import { Panel } from "@/components/app/Panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
 
@@ -16,6 +26,8 @@ type Invite = {
   consumed_at: string | null;
   revoked_at: string | null;
 };
+
+type InviteFilter = "all" | "pending" | "used" | "revoked";
 
 function displayDate(value: string | null) {
   if (!value) return "—";
@@ -40,8 +52,17 @@ export function CeoOperations() {
   const [email, setEmail] = useState("");
   const [gymName, setGymName] = useState("");
   const [note, setNote] = useState("");
+  const [pendingInvite, setPendingInvite] = useState<Invite | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [inviteFilter, setInviteFilter] = useState<InviteFilter>("all");
+  const filteredInvites = invites.filter((invite) => {
+    if (inviteFilter === "pending") return !invite.consumed_at && !invite.revoked_at;
+    if (inviteFilter === "used") return Boolean(invite.consumed_at);
+    if (inviteFilter === "revoked") return Boolean(invite.revoked_at) && !invite.consumed_at;
+    return true;
+  });
+  const pendingCount = invites.filter((invite) => !invite.consumed_at && !invite.revoked_at).length;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -82,13 +103,15 @@ export function CeoOperations() {
     }
   };
 
-  const revokeInvite = async (invite: Invite) => {
+  const revokeInvite = async () => {
+    if (!pendingInvite) return;
     setBusy(true);
     try {
       const { error } = await supabase.rpc("platform_revoke_signup_invite", {
-        p_email: invite.email,
+        p_email: pendingInvite.email,
       });
       if (error) return toast.error(inviteError(error));
+      setPendingInvite(null);
       toast.success("Unused invitation removed. Existing accounts are not affected.");
       await refresh();
     } catch {
@@ -172,9 +195,27 @@ export function CeoOperations() {
           An invitation permits one new account for that email. Removing an unused invitation blocks
           its future sign-up; it does not disable accounts that already exist.
         </p>
-        <div className="mt-5 space-y-2">
-          {invites.length ? (
-            invites.map((invite) => (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Show</span>
+            <select
+              className="h-9 rounded-md border border-input bg-background px-3"
+              value={inviteFilter}
+              onChange={(event) => setInviteFilter(event.target.value as InviteFilter)}
+            >
+              <option value="all">All invitations</option>
+              <option value="pending">Pending</option>
+              <option value="used">Used</option>
+              <option value="revoked">Revoked</option>
+            </select>
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {invites.length} total · {pendingCount} pending
+          </p>
+        </div>
+        <div className="mt-3 space-y-2">
+          {filteredInvites.length ? (
+            filteredInvites.map((invite) => (
               <div
                 key={invite.email}
                 className="flex flex-col gap-2 rounded-lg border border-border bg-secondary/15 p-3 sm:flex-row sm:items-center sm:justify-between"
@@ -206,7 +247,7 @@ export function CeoOperations() {
                       size="sm"
                       variant="destructive"
                       disabled={busy}
-                      onClick={() => void revokeInvite(invite)}
+                      onClick={() => setPendingInvite(invite)}
                     >
                       <UserMinus className="mr-1.5 h-3.5 w-3.5" /> Remove
                     </Button>
@@ -216,11 +257,38 @@ export function CeoOperations() {
             ))
           ) : (
             <p className="rounded-lg bg-secondary/20 p-3 text-sm text-muted-foreground">
-              No invitations yet.
+              {invites.length === 0 ? "No invitations yet." : `No ${inviteFilter} invitations.`}
             </p>
           )}
         </div>
       </Panel>
+      <AlertDialog
+        open={Boolean(pendingInvite)}
+        onOpenChange={(open) => !open && setPendingInvite(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this gym invitation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingInvite?.email} will no longer be able to create an account using this
+              invitation. Existing accounts are not affected; you can issue a new invitation later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Keep invitation</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(event) => {
+                event.preventDefault();
+                void revokeInvite();
+              }}
+            >
+              {busy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Revoke invitation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

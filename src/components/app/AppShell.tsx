@@ -21,7 +21,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { getCurrentSession, logoutSecurely, useGym, validateCurrentSession } from "@/lib/gym/store";
+import {
+  getCurrentSession,
+  logoutSecurely,
+  refreshCloudWorkspaceIfNewer,
+  useGym,
+  validateCurrentSession,
+} from "@/lib/gym/store";
 import { toast } from "sonner";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "./NotificationBell";
@@ -130,6 +136,32 @@ export function AppShell({ children }: { children: ReactNode }) {
       active = false;
     };
   }, [navigate]);
+
+  useEffect(() => {
+    if (!sessionChecked) return;
+    const refresh = () => {
+      if (!navigator.onLine) return;
+      void refreshCloudWorkspaceIfNewer().catch((error) => {
+        console.warn("Could not refresh the gym workspace", error);
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, 30_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", handleVisibility);
+    refresh();
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [sessionChecked]);
 
   useEffect(() => {
     if (!sessionChecked) return;

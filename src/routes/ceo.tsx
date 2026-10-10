@@ -431,7 +431,9 @@ function CeoPage() {
             ))}
           </nav>
 
-          {section === "dashboard" && <CeoControlCenter />}
+          {section === "dashboard" && (
+            <CeoControlCenter onNavigate={(target) => setSection(target)} />
+          )}
           {section === "invites" && <CeoOperations />}
           {section === "subscriptions" && <PlatformProManager />}
 

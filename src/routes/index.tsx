@@ -134,6 +134,12 @@ function Dashboard() {
   const data = useMemo(() => {
     if (!state) return null;
     const members = gymMembers(state);
+    const activeMemberIds = new Set(activeMembers(state).map((member) => member.id));
+    // Soft-deleted members remain in the recoverable Trash for 30 days, but their
+    // memberships must not inflate current-roster lifecycle or balance dashboards.
+    const liveMemberships = state.memberships.filter((membership) =>
+      activeMemberIds.has(membership.memberId),
+    );
     const statuses = members.map((m) => statusOf(state, m.id));
     const monthStart = new Date();
     monthStart.setDate(1);
@@ -164,7 +170,7 @@ function Dashboard() {
       )
       .sort((a, b) => +new Date(a.membership!.endDate) - +new Date(b.membership!.endDate));
     const balanceAges = [
-      ...state.memberships.flatMap((membership) => {
+      ...liveMemberships.flatMap((membership) => {
         const due = Math.max(
           0,
           subtractMoney(
@@ -177,10 +183,12 @@ function Dashboard() {
         );
         return due > 0 ? [{ due, date: membership.endDate }] : [];
       }),
-      ...state.sales.flatMap((sale) => {
-        const due = saleDue(state, sale);
-        return due > 0 ? [{ due, date: sale.date }] : [];
-      }),
+      ...state.sales
+        .filter((sale) => !sale.memberId || activeMemberIds.has(sale.memberId))
+        .flatMap((sale) => {
+          const due = saleDue(state, sale);
+          return due > 0 ? [{ due, date: sale.date }] : [];
+        }),
     ];
     const ageBuckets = [
       { label: "Current / today", min: -Infinity, max: 0, amount: 0 },
@@ -193,11 +201,11 @@ function Dashboard() {
       const bucket = ageBuckets.find((item) => age >= item.min && age <= item.max);
       if (bucket) bucket.amount = addMoney(bucket.amount, balance.due);
     });
-    const monthMemberships = state.memberships.filter(
+    const monthMemberships = liveMemberships.filter(
       (membership) => new Date(membership.createdAt) >= monthStart,
     );
     const renewalsThisMonth = monthMemberships.filter((membership) =>
-      state.memberships.some(
+      liveMemberships.some(
         (other) =>
           other.memberId === membership.memberId &&
           other.id !== membership.id &&
@@ -205,11 +213,11 @@ function Dashboard() {
       ),
     ).length;
     const membersWithMemberships = members.filter((member) =>
-      state.memberships.some((membership) => membership.memberId === member.id),
+      liveMemberships.some((membership) => membership.memberId === member.id),
     );
     const renewedMembers = membersWithMemberships.filter(
       (member) =>
-        state.memberships.filter((membership) => membership.memberId === member.id).length > 1,
+        liveMemberships.filter((membership) => membership.memberId === member.id).length > 1,
     ).length;
 
     return {
@@ -253,7 +261,7 @@ function Dashboard() {
           expenses.filter((expense) => isToday(expense.date)),
           (expense) => expense.amount,
         ),
-        memberships: state.memberships.filter((membership) => isToday(membership.createdAt)).length,
+        memberships: liveMemberships.filter((membership) => isToday(membership.createdAt)).length,
       },
     };
   }, [state, range]);

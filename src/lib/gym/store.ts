@@ -33,6 +33,7 @@ import {
   saveCloudWorkspace,
   signOutFromCloud,
 } from "./cloud";
+import type { CloudWorkspace } from "./cloud";
 import { isSupabaseConfigured } from "../../integrations/supabase/client";
 import { invokeEdgeFunction } from "../../integrations/supabase/functions";
 import { newWorkspace } from "./new-workspace";
@@ -54,6 +55,10 @@ let cloudSaveQueue: Promise<void> = Promise.resolve();
 let cloudSyncPending = false;
 let onlineSyncInstalled = false;
 let currentSession: CurrentSession | null = null;
+let cloudWorkspaceIO: {
+  load: typeof loadCloudWorkspace;
+  save: typeof saveCloudWorkspace;
+} = { load: loadCloudWorkspace, save: saveCloudWorkspace };
 const isBrowser = () => typeof window !== "undefined";
 const normalizedPhone = (value: string) => {
   const digits = value.replace(/\D/g, "");
@@ -85,7 +90,7 @@ function flushCloudSave(nextState: GymState, notifyOnError = true): Promise<bool
   const queuedSave = cloudSaveQueue.then(async () => {
     if (cloudOwnerId !== ownerId || cloudRevision === null) return;
     try {
-      cloudRevision = await saveCloudWorkspace(nextState, cloudRevision);
+      cloudRevision = await cloudWorkspaceIO.save(nextState, cloudRevision);
       saved = true;
       if (state === nextState) cloudSyncPending = false;
     } catch (error) {
@@ -113,6 +118,7 @@ function scheduleCloudSave(nextState: GymState) {
   const ownerId = cloudOwnerId;
   if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
   cloudSaveTimer = setTimeout(() => {
+    cloudSaveTimer = null;
     if (cloudOwnerId !== ownerId) return;
     void flushCloudSave(nextState);
   }, 500);
@@ -191,9 +197,87 @@ export function __setStateForLogicTests(next: GymState) {
   cloudOwnerId = null;
   cloudGymId = null;
   cloudRevision = null;
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = null;
   cloudSaveQueue = Promise.resolve();
   cloudSyncPending = false;
+  cloudWorkspaceIO = { load: loadCloudWorkspace, save: saveCloudWorkspace };
   emit();
+}
+
+/** Test-only cloud adapter injection for deterministic sync/race coverage. */
+export function __setCloudWorkspaceIOForLogicTests(input: {
+  ownerId: string;
+  gymId: string;
+  revision: number;
+  load: () => Promise<CloudWorkspace | null>;
+  save: (nextState: GymState, expectedRevision: number) => Promise<number>;
+}) {
+  if (typeof process === "undefined" || process.env.IRONVAULT_LOGIC_TESTS !== "1") {
+    throw new Error("Cloud test adapter injection is disabled.");
+  }
+  cloudOwnerId = input.ownerId;
+  cloudGymId = input.gymId;
+  cloudRevision = input.revision;
+  cloudWorkspaceIO = { load: input.load, save: input.save };
+  cloudSaveQueue = Promise.resolve();
+  cloudSyncPending = false;
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = null;
+}
+
+function stateFromCloudWorkspace(cloudState: GymState): GymState {
+  return {
+    ...cloudState,
+    expenses: (cloudState.expenses ?? []).map((expense) => ({
+      ...expense,
+      locked: expense.locked !== false,
+    })),
+    inquiries: cloudState.inquiries ?? [],
+    staff: sanitizedStaff(cloudState.staff),
+  };
+}
+
+/** Pull a newer workspace revision from Supabase without overwriting local edits. */
+export async function refreshCloudWorkspaceIfNewer() {
+  if (
+    !cloudOwnerId ||
+    !cloudGymId ||
+    cloudRevision === null ||
+    !state ||
+    !isBrowser() ||
+    !window.navigator.onLine ||
+    cloudSaveTimer ||
+    cloudSyncPending
+  ) {
+    return false;
+  }
+
+  const ownerAtStart = cloudOwnerId;
+  const gymAtStart = cloudGymId;
+  const revisionAtStart = cloudRevision;
+  const stateAtStart = state;
+  const latest = await cloudWorkspaceIO.load();
+
+  // The request may finish after a sign-out, workspace switch, or local edit.
+  // In those cases leave the current copy untouched.
+  if (
+    cloudOwnerId !== ownerAtStart ||
+    cloudGymId !== gymAtStart ||
+    cloudRevision !== revisionAtStart ||
+    state !== stateAtStart ||
+    cloudSaveTimer ||
+    cloudSyncPending ||
+    !latest ||
+    latest.gymId !== gymAtStart ||
+    latest.revision <= revisionAtStart
+  ) {
+    return false;
+  }
+
+  cloudRevision = latest.revision;
+  replaceState(stateFromCloudWorkspace(latest.state), false);
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1402,7 +1486,7 @@ export function resetData() {
 }
 
 export async function setupTemplateData() {
-  const previous = getState();
+  let previous = getState();
   const ownerAtStart = cloudOwnerId;
   const hadPendingCloudSave = Boolean(cloudSaveTimer) || cloudSyncPending;
 
@@ -1424,6 +1508,38 @@ export async function setupTemplateData() {
     throw new Error("Your workspace changed while setting up. Please try again.");
   }
 
+  // Confirm the server revision immediately before this replacement. The gym
+  // may have been edited from another open tab/device since this page loaded.
+  // Use that newest state as the rollback point and the revision for the
+  // template save; otherwise a stale tab can make the reset appear to succeed
+  // locally and then lose the template when the next route reloads Supabase.
+  if (cloudOwnerId) {
+    if (cloudRevision === null || cloudGymId === null) {
+      throw new Error("Your cloud workspace is still loading. Refresh the page and try again.");
+    }
+    let latest: CloudWorkspace | null;
+    try {
+      latest = await cloudWorkspaceIO.load();
+    } catch {
+      throw new Error(
+        "We could not verify your latest gym data. Check your connection and try again.",
+      );
+    }
+    if (state !== previous || cloudOwnerId !== ownerAtStart) {
+      throw new Error("Your workspace changed while setting up. Please try again.");
+    }
+    if (!latest || latest.gymId !== cloudGymId || latest.revision < cloudRevision) {
+      throw new Error(
+        "Your latest gym data could not be confirmed. Refresh the page and try again.",
+      );
+    }
+    if (latest.revision > cloudRevision) {
+      previous = stateFromCloudWorkspace(latest.state);
+      cloudRevision = latest.revision;
+      replaceState(previous, false);
+    }
+  }
+
   // Free workspaces get a representative starter dataset within their roster
   // allowance. Pro workspaces retain the complete demo dataset.
   const template = buildSeed(getSubscriptionSnapshot().active ? undefined : FREE_MEMBER_LIMIT);
@@ -1441,20 +1557,9 @@ export async function setupTemplateData() {
     if (!saved) {
       // Restore the server's latest revision when possible. If the request
       // failed offline, keep the last known good workspace in memory.
-      const latest = await loadCloudWorkspace().catch(() => null);
+      const latest = await cloudWorkspaceIO.load().catch(() => null);
       if (latest && cloudOwnerId === ownerAtStart) {
-        replaceState(
-          {
-            ...latest.state,
-            expenses: (latest.state.expenses ?? []).map((expense) => ({
-              ...expense,
-              locked: expense.locked !== false,
-            })),
-            inquiries: latest.state.inquiries ?? [],
-            staff: sanitizedStaff(latest.state.staff),
-          },
-          false,
-        );
+        replaceState(stateFromCloudWorkspace(latest.state), false);
         cloudRevision = latest.revision;
         cloudGymId = latest.gymId;
         cloudSyncPending = false;
