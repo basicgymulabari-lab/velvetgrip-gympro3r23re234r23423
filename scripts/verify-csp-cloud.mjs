@@ -14,6 +14,20 @@ async function verifyDocument(path) {
   assert.equal(response.status, 200, `${path} should return a document`);
   assert.match(response.headers.get("content-type") || "", /text\/html/i);
 
+  const permissionsPolicy = response.headers.get("permissions-policy") || "";
+  assert.match(
+    permissionsPolicy,
+    /(?:^|,)\s*camera=\(self\)(?:,|$)/i,
+    `${path} must allow camera access for the app's own origin`,
+  );
+  for (const feature of ["microphone", "geolocation", "usb", "serial", "bluetooth"]) {
+    assert.match(
+      permissionsPolicy,
+      new RegExp(`(?:^|,)\\s*${feature}=\\(\\)(?:,|$)`, "i"),
+      `${path} must keep ${feature} disabled`,
+    );
+  }
+
   const policy = response.headers.get("content-security-policy") || "";
   const scriptDirective = policy.match(/(?:^|;)\s*script-src\s+([^;]*)/i)?.[1] || "";
   assert.ok(scriptDirective, `${path} must have script-src`);
