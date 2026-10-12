@@ -23,10 +23,15 @@ begin
     raise exception 'recharge code generation RPC grants are too broad or missing';
   end if;
 
+  if has_function_privilege('anon', 'public.platform_set_bonus_pro_days(uuid,integer)', 'EXECUTE')
+    or has_function_privilege('service_role', 'public.platform_set_bonus_pro_days(uuid,integer)', 'EXECUTE')
+    or not has_function_privilege('authenticated', 'public.platform_set_bonus_pro_days(uuid,integer)', 'EXECUTE') then
+    raise exception 'bonus duration control RPC grants are too broad or missing';
+  end if;
+
   if has_function_privilege('authenticated', 'public.generate_recharge_codes(integer,integer,integer,text,text)', 'EXECUTE')
     or has_function_privilege('service_role', 'public.generate_recharge_codes(integer,integer,integer,text,text)', 'EXECUTE') then
     raise exception 'raw plaintext code generator must remain inaccessible through the API';
   end if;
 end;
 $$;
-

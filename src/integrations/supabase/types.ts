@@ -269,6 +269,48 @@ export type Database = {
         };
         Relationships: [];
       };
+      platform_app_releases: {
+        Row: {
+          id: string;
+          platform: string;
+          version: string;
+          release_notes: string;
+          download_url: string | null;
+          artifact_path: string | null;
+          file_name: string | null;
+          status: string;
+          created_by: string | null;
+          created_at: string;
+          published_at: string;
+        };
+        Insert: {
+          id?: string;
+          platform: string;
+          version: string;
+          release_notes: string;
+          download_url?: string | null;
+          artifact_path?: string | null;
+          file_name?: string | null;
+          status?: string;
+          created_by?: string | null;
+          created_at?: string;
+          published_at?: string;
+        };
+        Update: {
+          id?: string;
+          platform?: string;
+          version?: string;
+          release_notes?: string;
+          download_url?: string | null;
+          artifact_path?: string | null;
+          file_name?: string | null;
+          status?: string;
+          created_by?: string | null;
+          created_at?: string;
+          published_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -358,6 +400,10 @@ export type Database = {
         }[];
       };
       platform_grant_manual_pro: {
+        Args: { p_gym_id: string; p_days: number };
+        Returns: Json;
+      };
+      platform_set_bonus_pro_days: {
         Args: { p_gym_id: string; p_days: number };
         Returns: Json;
       };
@@ -470,6 +516,148 @@ export type Database = {
           invited_at: string;
           consumed_at: string | null;
           revoked_at: string | null;
+        }[];
+      };
+      platform_list_member_migration_gyms: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          gym_id: string;
+          gym_name: string;
+          owner_email: string;
+          account_status: string;
+          member_count: number;
+          has_workspace: boolean;
+          is_source: boolean;
+        }[];
+      };
+      platform_set_member_migration_source: {
+        Args: { p_gym_id: string; p_confirm_gym_name: string };
+        Returns: Json;
+      };
+      platform_get_member_migration_context: {
+        Args: { p_source_gym_id: string; p_destination_gym_id: string };
+        Returns: Json;
+      };
+      platform_list_member_migration_members: {
+        Args: {
+          p_source_gym_id: string;
+          p_destination_gym_id?: string | null;
+          p_search?: string;
+          p_page?: number;
+          p_page_size?: number;
+        };
+        Returns: {
+          member: Json;
+          possible_duplicate: boolean;
+          current_membership: Json | null;
+          total_count: number;
+        }[];
+      };
+      platform_import_migration_members: {
+        Args: { p_operation_id: string; p_source_gym_id: string; p_rows: Json; p_final?: boolean };
+        Returns: Json;
+      };
+      platform_transfer_members: {
+        Args: {
+          p_operation_id: string;
+          p_source_gym_id: string;
+          p_destination_gym_id: string;
+          p_member_ids: string[];
+          p_row_offset: number;
+          p_all_member_ids: string[];
+          p_plan_mapping: Json;
+          p_transfer_active_payments?: boolean;
+          p_override_duplicates?: string[];
+          p_final?: boolean;
+        };
+        Returns: Json;
+      };
+      platform_list_member_migration_history: {
+        Args: { p_page?: number; p_page_size?: number };
+        Returns: {
+          operation_id: string;
+          operation_type: string;
+          source_gym_name: string | null;
+          destination_gym_name: string | null;
+          admin_email: string;
+          status: string;
+          total_count: number;
+          successful_count: number;
+          skipped_count: number;
+          failed_count: number;
+          created_at: string;
+          updated_at: string;
+          row_count: number;
+        }[];
+      };
+      platform_finalize_member_migration: {
+        Args: { p_operation_id: string };
+        Returns: Json;
+      };
+      platform_list_member_migration_items: {
+        Args: { p_operation_id: string };
+        Returns: {
+          row_number: number;
+          source_member_id: string | null;
+          destination_member_id: string | null;
+          outcome: string;
+          message: string;
+        }[];
+      };
+      platform_list_app_releases: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          id: string;
+          platform: string;
+          version: string;
+          release_notes: string;
+          download_url: string | null;
+          artifact_path: string | null;
+          file_name: string | null;
+          status: string;
+          created_by: string | null;
+          created_at: string;
+          published_at: string;
+        }[];
+      };
+      platform_publish_app_release: {
+        Args: {
+          p_platform: string;
+          p_version: string;
+          p_release_notes: string;
+          p_artifact_path?: string | null;
+          p_file_name?: string | null;
+          p_download_url?: string | null;
+        };
+        Returns: {
+          id: string;
+          platform: string;
+          version: string;
+          release_notes: string;
+          download_url: string | null;
+          artifact_path: string | null;
+          file_name: string | null;
+          status: string;
+          created_by: string | null;
+          created_at: string;
+          published_at: string;
+        }[];
+      };
+      platform_archive_app_release: {
+        Args: { p_release_id: string };
+        Returns: Json;
+      };
+      platform_current_app_releases: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          id: string;
+          platform: string;
+          version: string;
+          release_notes: string;
+          download_url: string | null;
+          artifact_path: string | null;
+          file_name: string | null;
+          published_at: string;
         }[];
       };
     };

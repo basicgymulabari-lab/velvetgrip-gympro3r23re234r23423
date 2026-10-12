@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { getCurrentSession, useGym } from "@/lib/gym/store";
 import {
   activeMembers,
+  activePlanDistribution,
   gymMembers,
   currentMembership,
   daysUntil,
@@ -49,7 +50,8 @@ import {
   metricMeta,
   membershipPayable,
   money,
-  planDistribution,
+  isCurrentMemberStatus,
+  isInCurrentMonthToDate,
   profitOfSales,
   relative,
   revenueForMetric,
@@ -141,11 +143,8 @@ function Dashboard() {
       activeMemberIds.has(membership.memberId),
     );
     const statuses = members.map((m) => statusOf(state, m.id));
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-
-    const todayKey = new Date().toDateString();
+    const now = new Date();
+    const todayKey = now.toDateString();
     const isToday = (date: string) => new Date(date).toDateString() === todayKey;
     const expenses = state.expenses.filter((expense) => !expense.deletedAt);
     const collectedRevenue = totalRevenue(state);
@@ -201,8 +200,8 @@ function Dashboard() {
       const bucket = ageBuckets.find((item) => age >= item.min && age <= item.max);
       if (bucket) bucket.amount = addMoney(bucket.amount, balance.due);
     });
-    const monthMemberships = liveMemberships.filter(
-      (membership) => new Date(membership.createdAt) >= monthStart,
+    const monthMemberships = liveMemberships.filter((membership) =>
+      isInCurrentMonthToDate(membership.createdAt, now),
     );
     const renewalsThisMonth = monthMemberships.filter((membership) =>
       liveMemberships.some(
@@ -221,9 +220,10 @@ function Dashboard() {
     ).length;
 
     return {
-      active: statuses.filter((s) => s === "active" || s === "expiring").length,
+      active: statuses.filter(isCurrentMemberStatus).length,
       expired: statuses.filter((s) => s === "expired").length,
       frozen: statuses.filter((s) => s === "frozen").length,
+      unassigned: statuses.filter((s) => s === "unassigned").length,
       revenue: collectedRevenue,
       cardRevenue: revenueForMetric(
         state,
@@ -231,7 +231,7 @@ function Dashboard() {
       ),
       due: totalDue(state),
       series: revenueSeries(state, range),
-      plans: planDistribution(state),
+      plans: activePlanDistribution(state),
       products: topProducts(state, 5),
       profit: profitOfSales(state),
       totalMembers: members.length,
@@ -244,7 +244,7 @@ function Dashboard() {
       expiring,
       lowStock: lowStock(state).slice(0, 4),
       ageBuckets,
-      newThisMonth: members.filter((member) => new Date(member.joinDate) >= monthStart).length,
+      newThisMonth: members.filter((member) => isInCurrentMonthToDate(member.joinDate, now)).length,
       renewalsThisMonth,
       renewalRate: membersWithMemberships.length
         ? Math.round((renewedMembers / membersWithMemberships.length) * 100)
@@ -304,7 +304,7 @@ function Dashboard() {
             icon={Users}
             tone="gold"
             to="/members"
-            search={{ filter: "active", q: "", page: 1 }}
+            search={{ filter: "active", q: "" }}
           />
         )}
         {canViewRevenue && (
@@ -333,11 +333,15 @@ function Dashboard() {
           <StatCard
             label="Expired Members"
             value={String(data.expired)}
-            hint="Needs renewal follow-up"
+            hint={
+              data.unassigned > 0
+                ? `${data.unassigned} member${data.unassigned === 1 ? "" : "s"} have no assigned plan`
+                : "Needs renewal follow-up"
+            }
             icon={CalendarX}
             tone="danger"
             to="/members"
-            search={{ filter: "expired", q: "", page: 1 }}
+            search={{ filter: "expired", q: "" }}
           />
         )}
       </div>
@@ -347,7 +351,7 @@ function Dashboard() {
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {(!isReceptionist || session?.permissions?.members) && (
               <Button asChild variant="secondary" className="justify-start">
-                <Link to="/members" search={{ filter: "all", q: "", page: 1, new: true }}>
+                <Link to="/members" search={{ filter: "all", q: "", new: true }}>
                   <UserRoundPlus className="mr-2 h-4 w-4 text-gold" /> Add Member
                 </Link>
               </Button>
@@ -414,6 +418,10 @@ function Dashboard() {
                         <stop offset="0%" stopColor="var(--color-success)" stopOpacity={0.4} />
                         <stop offset="100%" stopColor="var(--color-success)" stopOpacity={0.02} />
                       </linearGradient>
+                      <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--color-chart-3)" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="var(--color-chart-3)" stopOpacity={0.02} />
+                      </linearGradient>
                     </defs>
                     <CartesianGrid
                       strokeDasharray="3 6"
@@ -443,7 +451,7 @@ function Dashboard() {
                       }}
                       formatter={(v: number, n: string) => [
                         money(v, cur),
-                        n === "membership" ? "Membership" : "Products",
+                        n === "membership" ? "Membership" : n === "product" ? "Products" : "Other",
                       ]}
                     />
                     <Area
@@ -460,11 +468,22 @@ function Dashboard() {
                       strokeWidth={2}
                       fill="url(#gGreen)"
                     />
+                    <Area
+                      type="monotone"
+                      dataKey="other"
+                      stroke="var(--color-chart-3)"
+                      strokeWidth={2}
+                      fill="url(#gBlue)"
+                    />
                     <Legend
                       iconType="circle"
                       iconSize={8}
                       formatter={(value: string) =>
-                        value === "membership" ? "Membership" : "Products"
+                        value === "membership"
+                          ? "Membership"
+                          : value === "product"
+                            ? "Products"
+                            : "Other"
                       }
                     />
                   </AreaChart>
@@ -479,96 +498,96 @@ function Dashboard() {
         {canViewMemberships && (
           <Panel title="Membership Statistics" description="Active members by plan">
             {data.plans.length > 0 ? (
-            <div>
-              <div className="relative h-[190px] w-full sm:h-[210px]">
-                <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 text-center">
-                  <p className="font-display text-3xl leading-none text-foreground">
-                    {data.active}
-                  </p>
-                  <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                    Active
-                  </p>
-                </div>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <defs>
-                      {PLAN_GRADIENTS.map(([start, end], index) => (
-                        <linearGradient
-                          key={index}
-                          id={`membership-segment-${index}`}
-                          x1="0"
-                          y1="0"
-                          x2="1"
-                          y2="1"
-                        >
-                          <stop offset="0%" stopColor={start} />
-                          <stop offset="100%" stopColor={end} />
-                        </linearGradient>
-                      ))}
-                    </defs>
-                    <Pie
-                      data={data.plans}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius="62%"
-                      outerRadius="79%"
-                      paddingAngle={3.5}
-                      cornerRadius={2}
-                      minAngle={2}
-                      stroke="var(--color-card)"
-                      strokeWidth={2}
-                      isAnimationActive
-                      animationDuration={700}
-                    >
-                      {data.plans.map((_, i) => (
-                        <Cell
-                          key={i}
-                          fill={`url(#membership-segment-${i % PLAN_GRADIENTS.length})`}
-                          style={{ transition: "opacity 200ms ease, filter 200ms ease" }}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      cursor={false}
-                      content={({ active, payload }) =>
-                        active && payload?.length ? (
-                          <div className="rounded-xl border border-border bg-popover px-3.5 py-2.5 text-xs shadow-lg">
-                            <p className="font-semibold text-foreground">{payload[0].name}</p>
-                            <p className="mt-0.5 text-muted-foreground">
-                              Members:{" "}
-                              <span className="font-medium text-gold">{payload[0].value}</span>
-                            </p>
-                          </div>
-                        ) : null
-                      }
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-2 grid gap-x-4 gap-y-1.5 border-t border-border/70 pt-3 sm:grid-cols-2">
-                {data.plans.map((plan, i) => (
-                  <div
-                    key={plan.name}
-                    className="flex min-w-0 items-center gap-2 rounded-lg px-1 py-1"
-                  >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{
-                        background: `linear-gradient(135deg, ${PLAN_GRADIENTS[i % PLAN_GRADIENTS.length][0]}, ${PLAN_GRADIENTS[i % PLAN_GRADIENTS.length][1]})`,
-                      }}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                      {plan.name}
-                    </span>
-                    <span className="shrink-0 text-xs font-semibold text-foreground">
-                      {plan.value}
-                    </span>
+              <div>
+                <div className="relative h-[190px] w-full sm:h-[210px]">
+                  <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 text-center">
+                    <p className="font-display text-3xl leading-none text-foreground">
+                      {data.active}
+                    </p>
+                    <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                      Active
+                    </p>
                   </div>
-                ))}
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <defs>
+                        {PLAN_GRADIENTS.map(([start, end], index) => (
+                          <linearGradient
+                            key={index}
+                            id={`membership-segment-${index}`}
+                            x1="0"
+                            y1="0"
+                            x2="1"
+                            y2="1"
+                          >
+                            <stop offset="0%" stopColor={start} />
+                            <stop offset="100%" stopColor={end} />
+                          </linearGradient>
+                        ))}
+                      </defs>
+                      <Pie
+                        data={data.plans}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius="62%"
+                        outerRadius="79%"
+                        paddingAngle={3.5}
+                        cornerRadius={2}
+                        minAngle={2}
+                        stroke="var(--color-card)"
+                        strokeWidth={2}
+                        isAnimationActive
+                        animationDuration={700}
+                      >
+                        {data.plans.map((_, i) => (
+                          <Cell
+                            key={i}
+                            fill={`url(#membership-segment-${i % PLAN_GRADIENTS.length})`}
+                            style={{ transition: "opacity 200ms ease, filter 200ms ease" }}
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        cursor={false}
+                        content={({ active, payload }) =>
+                          active && payload?.length ? (
+                            <div className="rounded-xl border border-border bg-popover px-3.5 py-2.5 text-xs shadow-lg">
+                              <p className="font-semibold text-foreground">{payload[0].name}</p>
+                              <p className="mt-0.5 text-muted-foreground">
+                                Members:{" "}
+                                <span className="font-medium text-gold">{payload[0].value}</span>
+                              </p>
+                            </div>
+                          ) : null
+                        }
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-2 grid gap-x-4 gap-y-1.5 border-t border-border/70 pt-3 sm:grid-cols-2">
+                  {data.plans.map((plan, i) => (
+                    <div
+                      key={plan.name}
+                      className="flex min-w-0 items-center gap-2 rounded-lg px-1 py-1"
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{
+                          background: `linear-gradient(135deg, ${PLAN_GRADIENTS[i % PLAN_GRADIENTS.length][0]}, ${PLAN_GRADIENTS[i % PLAN_GRADIENTS.length][1]})`,
+                        }}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                        {plan.name}
+                      </span>
+                      <span className="shrink-0 text-xs font-semibold text-foreground">
+                        {plan.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
             ) : (
               <EmptyState
                 title="No active memberships"
@@ -743,7 +762,11 @@ function Dashboard() {
                   tone="success"
                 />
                 {canViewExpenses && (
-                  <SummaryMetric label="Expenses" value={money(data.expenses, cur)} tone="warning" />
+                  <SummaryMetric
+                    label="Expenses"
+                    value={money(data.expenses, cur)}
+                    tone="warning"
+                  />
                 )}
                 {canViewProductCost && (
                   <SummaryMetric
@@ -798,6 +821,7 @@ function Dashboard() {
               <LifecycleMetric label="Renewals" value={data.renewalsThisMonth} />
               <LifecycleMetric label="Active" value={data.active} />
               <LifecycleMetric label="Expired" value={data.expired} />
+              <LifecycleMetric label="No plan" value={data.unassigned} />
               <LifecycleMetric label="Renewal rate" value={`${data.renewalRate}%`} />
               <LifecycleMetric label="Frozen" value={data.frozen} />
             </div>
@@ -810,7 +834,9 @@ function Dashboard() {
           {canViewRevenue && (
             <TodayMetric label="Payments received" value={money(data.today.payments, cur)} />
           )}
-          {canViewProducts && <TodayMetric label="Products sold" value={String(data.today.sales)} />}
+          {canViewProducts && (
+            <TodayMetric label="Products sold" value={String(data.today.sales)} />
+          )}
           {canViewExpenses && (
             <TodayMetric label="Expenses recorded" value={money(data.today.expenses, cur)} />
           )}
@@ -826,15 +852,17 @@ function Dashboard() {
           ...(canViewProducts ? [["Products in catalogue", String(data.productCount)]] : []),
           ...(canViewPayments ? [["Invoices generated", String(data.invoiceCount)]] : []),
           ...(canViewMemberships
-            ? [[
-                `Expiring within ${state.settings.expiryReminderDays} days`,
-                String(
-                  gymMembers(state).filter((m) => {
-                    const ms = currentMembership(state, m.id);
-                    return ms && statusOf(state, m.id) === "expiring";
-                  }).length,
-                ),
-              ]]
+            ? [
+                [
+                  `Expiring within ${state.settings.expiryReminderDays} days`,
+                  String(
+                    gymMembers(state).filter((m) => {
+                      const ms = currentMembership(state, m.id);
+                      return ms && statusOf(state, m.id) === "expiring";
+                    }).length,
+                  ),
+                ],
+              ]
             : []),
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-4">

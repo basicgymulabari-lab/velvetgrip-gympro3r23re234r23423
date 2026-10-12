@@ -7,6 +7,7 @@ import {
   KeyRound,
   LoaderCircle,
   RefreshCw,
+  Save,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -58,8 +59,17 @@ type RechargeCode = {
 type NewCode = { code: string; target_email: string; duration_days: number; redeem_by: string };
 type Action =
   | { kind: "grant"; owner: OwnerAccount }
+  | { kind: "set-duration"; owner: OwnerAccount; duration: number }
   | { kind: "revoke-pro"; owner: OwnerAccount }
   | { kind: "revoke-code"; code: RechargeCode };
+
+const PRO_DURATION_MAX = 3650;
+const REDEEM_WINDOW_MAX = 366;
+
+function isValidDuration(value: string, max = PRO_DURATION_MAX) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= max;
+}
 
 function formatDate(value: string | null) {
   if (!value) return "—";
@@ -77,7 +87,11 @@ function readableError(error: unknown, fallback: string) {
   if (message.includes("NO_REVOCABLE_PRO_ACCESS"))
     return "There is no manual or recharge Pro access to revoke for this account.";
   if (message.includes("DURATION_DAYS_MUST_BE_1_TO_366"))
-    return "Choose a duration from 1 to 366 days.";
+    return "Choose a duration from 1 to 3,650 days.";
+  if (message.includes("DURATION_DAYS_MUST_BE_1_TO_3650"))
+    return "Choose a duration from 1 to 3,650 days.";
+  if (message.includes("NO_ADJUSTABLE_PRO_ACCESS"))
+    return "This account has no active manual or recharge Pro term to adjust. Paid subscriptions are managed by the payment provider.";
   return fallback;
 }
 
@@ -87,11 +101,13 @@ export function PlatformProManager() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [owners, setOwners] = useState<OwnerAccount[]>([]);
   const [codes, setCodes] = useState<RechargeCode[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ownerId, setOwnerId] = useState("");
   const [days, setDays] = useState("30");
   const [membershipDays, setMembershipDays] = useState("30");
+  const [ownerDurations, setOwnerDurations] = useState<Record<string, string>>({});
   const [validDays, setValidDays] = useState("14");
   const [label, setLabel] = useState("");
   const [newCode, setNewCode] = useState<NewCode | null>(null);
@@ -105,6 +121,7 @@ export function PlatformProManager() {
   const loadData = useCallback(async () => {
     if (!isSupabaseConfigured()) return;
     setLoading(true);
+    setLoadFailed(false);
     try {
       const [ownerResult, codeResult] = await Promise.all([
         supabase.rpc("platform_list_owners"),
@@ -121,6 +138,7 @@ export function PlatformProManager() {
           : (nextOwners[0]?.owner_id ?? ""),
       );
     } catch (error) {
+      setLoadFailed(true);
       toast.error(readableError(error, "Could not load Pro access records."));
     } finally {
       setLoading(false);
@@ -156,9 +174,8 @@ export function PlatformProManager() {
     if (!selectedOwner) return toast.error("There are no registered owner accounts yet.");
     const duration = Number(days);
     const redeemWindow = Number(validDays);
-    if (!Number.isInteger(duration) || duration < 1 || duration > 366)
-      return toast.error("Choose a Pro duration from 1 to 366 days.");
-    if (!Number.isInteger(redeemWindow) || redeemWindow < 1 || redeemWindow > 366)
+    if (!isValidDuration(days)) return toast.error("Choose a Pro duration from 1 to 3,650 days.");
+    if (!isValidDuration(validDays, REDEEM_WINDOW_MAX))
       return toast.error("Choose a redemption deadline from 1 to 366 days.");
 
     setBusy(true);
@@ -190,14 +207,27 @@ export function PlatformProManager() {
     try {
       if (pendingAction.kind === "grant") {
         const duration = Number(membershipDays);
-        if (!Number.isInteger(duration) || duration < 1 || duration > 366)
-          throw new Error("Choose a Pro duration from 1 to 366 days.");
+        if (!isValidDuration(membershipDays))
+          throw new Error("Choose a Pro duration from 1 to 3,650 days.");
         const { error } = await supabase.rpc("platform_grant_manual_pro", {
           p_gym_id: pendingAction.owner.gym_id,
           p_days: duration,
         });
         if (error) throw error;
         toast.success(`Pro membership activated for ${pendingAction.owner.owner_email}.`);
+      } else if (pendingAction.kind === "set-duration") {
+        const { error } = await supabase.rpc("platform_set_bonus_pro_days", {
+          p_gym_id: pendingAction.owner.gym_id,
+          p_days: pendingAction.duration,
+        });
+        if (error) throw error;
+        setOwnerDurations((current) => ({
+          ...current,
+          [pendingAction.owner.gym_id]: String(pendingAction.duration),
+        }));
+        toast.success(
+          `Bonus Pro access for ${pendingAction.owner.owner_email} is now set to ${pendingAction.duration} days from today.`,
+        );
       } else if (pendingAction.kind === "revoke-pro") {
         const { data, error } = await supabase.rpc("platform_revoke_pro", {
           p_gym_id: pendingAction.owner.gym_id,
@@ -274,9 +304,18 @@ export function PlatformProManager() {
               id="pro-code-owner"
               value={selectedOwner?.owner_id ?? ""}
               onChange={(event) => setOwnerId(event.target.value)}
-              disabled={!owners.length || busy}
+              disabled={loading || !owners.length || busy}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
+              {!owners.length && (
+                <option value="">
+                  {loading
+                    ? "Loading gym-owner accounts…"
+                    : loadFailed
+                      ? "Could not load accounts"
+                      : "No gym-owner accounts found"}
+                </option>
+              )}
               {owners.map((owner) => (
                 <option key={owner.owner_id} value={owner.owner_id}>
                   {owner.owner_email} — {owner.gym_name}
@@ -290,10 +329,14 @@ export function PlatformProManager() {
               id="pro-code-days"
               type="number"
               min={1}
-              max={366}
+              max={PRO_DURATION_MAX}
               value={days}
               onChange={(event) => setDays(event.target.value)}
+              aria-invalid={!isValidDuration(days)}
             />
+            {!isValidDuration(days) && (
+              <p className="text-xs text-destructive">Enter a whole number from 1 to 3,650.</p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="pro-code-valid-days">Redeem within (days)</Label>
@@ -301,7 +344,7 @@ export function PlatformProManager() {
               id="pro-code-valid-days"
               type="number"
               min={1}
-              max={366}
+              max={REDEEM_WINDOW_MAX}
               value={validDays}
               onChange={(event) => setValidDays(event.target.value)}
             />
@@ -324,7 +367,15 @@ export function PlatformProManager() {
           </p>
         )}
         <div className="mt-4 flex justify-end">
-          <Button onClick={() => void generateCode()} disabled={busy || !selectedOwner}>
+          <Button
+            onClick={() => void generateCode()}
+            disabled={
+              busy ||
+              !selectedOwner ||
+              !isValidDuration(days) ||
+              !isValidDuration(validDays, REDEEM_WINDOW_MAX)
+            }
+          >
             {busy ? (
               <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -376,16 +427,20 @@ export function PlatformProManager() {
             </p>
           </div>
           <div className="w-full space-y-2 sm:w-48">
-            <Label htmlFor="membership-activation-days">Membership duration (days)</Label>
+            <Label htmlFor="membership-activation-days">Activation duration (days)</Label>
             <Input
               id="membership-activation-days"
               type="number"
               min={1}
-              max={366}
+              max={PRO_DURATION_MAX}
               value={membershipDays}
               onChange={(event) => setMembershipDays(event.target.value)}
               disabled={busy}
+              aria-invalid={!isValidDuration(membershipDays)}
             />
+            {!isValidDuration(membershipDays) && (
+              <p className="text-xs text-destructive">Enter a whole number from 1 to 3,650.</p>
+            )}
           </div>
         </div>
         {owners.length ? (
@@ -415,22 +470,82 @@ export function PlatformProManager() {
                     Expires {formatDate(owner.current_period_end)}
                   </span>
                   <span className="capitalize text-muted-foreground">{owner.source ?? "—"}</span>
-                  {owner.status === "active" && owner.can_revoke_bonus ? (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => setPendingAction({ kind: "revoke-pro", owner })}
-                    >
-                      <Ban className="mr-1.5 h-3.5 w-3.5" /> Revoke bonus access
-                    </Button>
-                  ) : owner.status === "active" ? (
+                  {owner.status === "active" &&
+                  owner.days_remaining > 0 &&
+                  owner.can_revoke_bonus ? (
+                    <div className="flex flex-wrap items-end gap-2">
+                      {(owner.source === "manual" || owner.source === "recharge") && (
+                        <>
+                          <div className="w-28 space-y-1">
+                            <Label htmlFor={`bonus-days-${owner.gym_id}`} className="text-[11px]">
+                              Set remaining days
+                            </Label>
+                            <Input
+                              id={`bonus-days-${owner.gym_id}`}
+                              type="number"
+                              min={1}
+                              max={PRO_DURATION_MAX}
+                              value={
+                                ownerDurations[owner.gym_id] ??
+                                String(Math.max(owner.days_remaining, 1))
+                              }
+                              onChange={(event) =>
+                                setOwnerDurations((current) => ({
+                                  ...current,
+                                  [owner.gym_id]: event.target.value,
+                                }))
+                              }
+                              disabled={busy}
+                              aria-invalid={
+                                !isValidDuration(
+                                  ownerDurations[owner.gym_id] ??
+                                    String(Math.max(owner.days_remaining, 1)),
+                                )
+                              }
+                            />
+                          </div>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={
+                              busy ||
+                              !isValidDuration(
+                                ownerDurations[owner.gym_id] ??
+                                  String(Math.max(owner.days_remaining, 1)),
+                              )
+                            }
+                            onClick={() => {
+                              const duration = Number(
+                                ownerDurations[owner.gym_id] ?? Math.max(owner.days_remaining, 1),
+                              );
+                              setPendingAction({ kind: "set-duration", owner, duration });
+                            }}
+                          >
+                            <Save className="mr-1.5 h-3.5 w-3.5" /> Set duration
+                          </Button>
+                        </>
+                      )}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => setPendingAction({ kind: "revoke-pro", owner })}
+                      >
+                        <Ban className="mr-1.5 h-3.5 w-3.5" /> Revoke bonus access
+                      </Button>
+                      {owner.source !== "manual" && owner.source !== "recharge" && (
+                        <span className="text-xs text-muted-foreground">
+                          Duration is controlled by the active payment provider.
+                        </span>
+                      )}
+                    </div>
+                  ) : owner.status === "active" && owner.days_remaining > 0 ? (
                     <span className="text-muted-foreground">Manage in payment provider</span>
                   ) : (
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={busy}
+                      disabled={busy || !isValidDuration(membershipDays)}
                       onClick={() => {
                         setOwnerId(owner.owner_id);
                         setPendingAction({ kind: "grant", owner });
@@ -445,7 +560,11 @@ export function PlatformProManager() {
           </div>
         ) : (
           <p className="mt-3 rounded-lg bg-secondary/20 p-3 text-sm text-muted-foreground">
-            No registered gym-owner accounts found.
+            {loading
+              ? "Loading gym-owner accounts…"
+              : loadFailed
+                ? "Could not load gym-owner accounts. Use Refresh to try again."
+                : "No registered gym-owner accounts found."}
           </p>
         )}
       </section>
@@ -508,16 +627,20 @@ export function PlatformProManager() {
             <AlertDialogTitle>
               {pendingAction?.kind === "grant"
                 ? "Activate Pro membership?"
-                : pendingAction?.kind === "revoke-pro"
-                  ? "Revoke bonus Pro access?"
-                  : "Revoke this unused code?"}
+                : pendingAction?.kind === "set-duration"
+                  ? "Set remaining bonus Pro days?"
+                  : pendingAction?.kind === "revoke-pro"
+                    ? "Revoke bonus Pro access?"
+                    : "Revoke this unused code?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingAction?.kind === "grant"
                 ? `This activates Pro for ${membershipDays || "0"} days for ${pendingAction.owner.owner_email}. The change is saved to Supabase and appears in the live dashboard.`
-                : pendingAction?.kind === "revoke-pro"
-                  ? `This removes active manual/recharge access for ${pendingAction.owner.owner_email}. A separately paid provider subscription, if any, will remain active.`
-                  : `This permanently blocks the unused code assigned to ${pendingAction?.kind === "revoke-code" ? pendingAction.code.assigned_owner || "the first eligible account" : ""}. It cannot be undone.`}
+                : pendingAction?.kind === "set-duration"
+                  ? `This sets ${pendingAction.owner.owner_email}'s remaining manual/recharge Pro access to ${pendingAction.duration} days from today. It can extend or shorten bonus access and is recorded in the audit log. Paid provider subscriptions are not changed.`
+                  : pendingAction?.kind === "revoke-pro"
+                    ? `This removes active manual/recharge access for ${pendingAction.owner.owner_email}. A separately paid provider subscription, if any, will remain active.`
+                    : `This permanently blocks the unused code assigned to ${pendingAction?.kind === "revoke-code" ? pendingAction.code.assigned_owner || "the first eligible account" : ""}. It cannot be undone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -532,9 +655,11 @@ export function PlatformProManager() {
               {busy && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
               {pendingAction?.kind === "grant"
                 ? "Activate membership"
-                : pendingAction?.kind === "revoke-pro"
-                  ? "Revoke Pro access"
-                  : "Revoke code"}
+                : pendingAction?.kind === "set-duration"
+                  ? "Set remaining days"
+                  : pendingAction?.kind === "revoke-pro"
+                    ? "Revoke Pro access"
+                    : "Revoke code"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

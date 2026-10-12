@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
-import { TablePager } from "@/components/app/TablePager";
 import { MemberFormDialog } from "@/components/app/MemberFormDialog";
 import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
 import { Button } from "@/components/ui/button";
@@ -44,7 +43,6 @@ import {
 const searchSchema = z.object({
   filter: fallback(z.string(), "all").default("all"),
   q: fallback(z.string(), "").default(""),
-  page: fallback(z.number().int(), 1).default(1),
   new: fallback(z.boolean(), false).default(false),
 });
 
@@ -72,8 +70,7 @@ export const Route = createFileRoute("/members/")({
   ),
 });
 
-const FILTERS = ["all", "active", "expiring", "expired", "frozen", "due", "walk-in"] as const;
-const PAGE_SIZE = 8;
+const FILTERS = ["all", "active", "expiring", "expired", "frozen", "unassigned", "due", "walk-in"] as const;
 
 function MembersPage() {
   const state = useGym();
@@ -88,7 +85,6 @@ function MembersPage() {
     ? (search.filter as (typeof FILTERS)[number])
     : "all";
   const q = search.q.slice(0, 60).toLowerCase();
-  const page = Math.max(1, search.page);
   const registeredMembers = state ? regularMemberCount(state) : 0;
   const memberLimitReached = registeredMembers >= FREE_MEMBER_LIMIT && !subscription.active;
 
@@ -136,7 +132,6 @@ function MembersPage() {
 
   if (!state) return null;
   const cur = state.settings.currency;
-  const paged = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const setSearch = (patch: Record<string, unknown>) =>
     navigate({ search: (prev: Record<string, unknown>) => ({ ...prev, ...patch }) as never });
 
@@ -170,7 +165,7 @@ function MembersPage() {
               placeholder="Search by name, phone or email"
               value={search.q}
               maxLength={60}
-              onChange={(e) => setSearch({ q: e.target.value, page: 1 })}
+              onChange={(e) => setSearch({ q: e.target.value })}
             />
           </div>
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -178,21 +173,27 @@ function MembersPage() {
             {FILTERS.map((f) => (
               <button
                 key={f}
-                onClick={() => setSearch({ filter: f, page: 1 })}
+                onClick={() => setSearch({ filter: f })}
                 className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors ${
                   filter === f
                     ? "border-gold/50 bg-gold/15 text-gold"
                     : "border-border text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {f === "due" ? "Pending due" : f === "walk-in" ? "Walk-in Customers" : f}
+                {f === "due"
+                  ? "Pending due"
+                  : f === "walk-in"
+                    ? "Walk-in Customers"
+                    : f === "unassigned"
+                      ? "No plan"
+                      : f}
               </button>
             ))}
           </div>
         </div>
 
         <div className="mt-5 overflow-x-auto">
-          {paged.length === 0 ? (
+          {rows.length === 0 ? (
             <EmptyState title="No people found" hint="Try a different filter or search term." />
           ) : (
             <table className="w-full min-w-[760px] text-sm">
@@ -207,7 +208,7 @@ function MembersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paged.map(({ member, status, due, membership }) => (
+                {rows.map(({ member, status, due, membership }) => (
                   <tr
                     key={member.id}
                     className="border-b border-border/50 transition-colors hover:bg-secondary/40"
@@ -287,13 +288,6 @@ function MembersPage() {
             </table>
           )}
         </div>
-
-        <TablePager
-          page={page}
-          pageSize={PAGE_SIZE}
-          total={rows.length}
-          onPage={(p) => setSearch({ page: p })}
-        />
       </Panel>
 
       <MemberFormDialog
@@ -324,8 +318,9 @@ function MembersPage() {
             <AlertDialogAction
               onClick={() => {
                 if (toTrash) {
-                  trashMember(toTrash.id, state.settings.adminName);
-                  toast.success(`${toTrash.name} moved to Trash`);
+                  if (trashMember(toTrash.id, state.settings.adminName))
+                    toast.success(`${toTrash.name} moved to Trash`);
+                  else toast.error("Member was not moved to Trash.");
                 }
                 setToTrash(null);
               }}

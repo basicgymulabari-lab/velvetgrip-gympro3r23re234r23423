@@ -162,26 +162,62 @@ export async function verifyRazorpayPaymentSignature(paymentId: string, subscrip
   return constantTimeEqual(expected, signature.trim());
 }
 
-export async function claimWebhook(provider: Provider, eventKey: string, eventType: string | undefined, rawBody: string) {
+export type WebhookClaim = {
+  status: "claimed" | "processed" | "in_progress" | "payload_conflict";
+  claimToken: string | null;
+};
+
+export async function claimWebhook(
+  provider: Provider,
+  eventKey: string,
+  eventType: string | undefined,
+  rawBody: string,
+): Promise<WebhookClaim> {
   const hash = await sha256Hex(rawBody);
-  const { error } = await admin.from("billing_webhook_events").insert({
-    provider,
-    event_key: eventKey,
-    event_type: eventType ?? null,
-    payload_sha256: hash,
-    status: "processing",
+  const claimToken = crypto.randomUUID();
+  const { data, error } = await admin.rpc("claim_billing_webhook_event", {
+    p_provider: provider,
+    p_event_key: eventKey,
+    p_event_type: eventType ?? null,
+    p_payload_sha256: hash,
+    p_claim_token: claimToken,
+    p_reclaim_after_seconds: 600,
   });
-  if (!error) return true;
-  if (error.code === "23505") return false;
+  if (error) throw new HttpError("Could not register webhook event.", 502, "WEBHOOK_REGISTER_FAILED");
+  if (
+    data === "claimed" ||
+    data === "processed" ||
+    data === "in_progress" ||
+    data === "payload_conflict"
+  ) {
+    return { status: data, claimToken: data === "claimed" ? claimToken : null };
+  }
   throw new HttpError("Could not register webhook event.", 502, "WEBHOOK_REGISTER_FAILED");
 }
 
-export async function finishWebhook(provider: Provider, eventKey: string, status: "processed" | "failed", errorCode?: string) {
-  await admin
+export async function finishWebhook(
+  provider: Provider,
+  eventKey: string,
+  claimToken: string,
+  status: "processed" | "failed",
+  errorCode?: string,
+) {
+  const { data, error } = await admin
     .from("billing_webhook_events")
-    .update({ status, error_code: errorCode ?? null, processed_at: new Date().toISOString() })
+    .update({
+      status,
+      error_code: errorCode ?? null,
+      processed_at: new Date().toISOString(),
+      claim_token: null,
+    })
     .eq("provider", provider)
-    .eq("event_key", eventKey);
+    .eq("event_key", eventKey)
+    .eq("claim_token", claimToken)
+    .select("event_key")
+    .maybeSingle();
+  if (error || !data) {
+    throw new HttpError("Could not finalize webhook event.", 502, "WEBHOOK_FINALIZE_FAILED");
+  }
 }
 
 export async function stripeFormRequest(path: string, form: URLSearchParams, idempotencyKey?: string) {

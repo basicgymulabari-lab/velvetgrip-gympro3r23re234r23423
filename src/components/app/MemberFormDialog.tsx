@@ -26,6 +26,7 @@ import type { Member, PaymentMethod, PhoneCountry } from "@/lib/gym/types";
 import { isWalkIn, shortDate } from "@/lib/gym/selectors";
 import { dialCodeFor, localPhoneDigits, phoneInputValue } from "@/lib/gym/phone";
 import { isLifetimePlan, membershipEndDate } from "@/lib/gym/membership";
+import { isSafeMoneyAmount, isSafeMoneySum } from "@/lib/gym/money";
 import { openSubscriptionPaywall } from "@/lib/billing/client";
 import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
 import {
@@ -245,9 +246,14 @@ export function MemberFormDialog({
 
   let liveJoiningFeeError = "";
   if (!member) {
-    if (form.joiningFee === "" || !Number.isFinite(Number(form.joiningFee)))
+    if (form.joiningFee === "" || !isSafeMoneyAmount(Number(form.joiningFee)))
       liveJoiningFeeError = "Enter a valid joining fee.";
     else if (Number(form.joiningFee) < 0) liveJoiningFeeError = "Joining fee cannot be negative.";
+    else if (
+      form.planId &&
+      !isSafeMoneySum(Math.max(0, originalPrice - discountAmount), joiningFee)
+    )
+      liveJoiningFeeError = "The total membership charge is too large to calculate accurately.";
   }
 
   const personalErrors = () => {
@@ -259,7 +265,7 @@ export function MemberFormDialog({
     if (localPhoneDigits(form.phone).length !== 10)
       e.phone = "Enter exactly 10 digits after the country code.";
     if (!editingWalkIn && !form.dob) e.dob = "Date of birth is required.";
-    else if (new Date(form.dob) > new Date()) e.dob = "Date of birth cannot be in the future.";
+    else if (form.dob > toDateInput(new Date())) e.dob = "Date of birth cannot be in the future.";
     if (form.address.trim().length > 200) e.address = "Address is too long.";
     return e;
   };
@@ -450,13 +456,17 @@ export function MemberFormDialog({
         email: form.email.trim(),
         phone: form.phone.trim(),
         gender: form.gender,
-        dob: editingWalkIn ? (member?.dob ?? "") : new Date(form.dob).toISOString(),
+        dob: editingWalkIn ? (member?.dob ?? "") : form.dob,
         address: form.address.trim(),
         emergencyContact: form.emergencyContact.trim(),
         photo,
       };
       if (member) {
-        updateMember(member.id, payload);
+        if (!updateMember(member.id, payload)) {
+          throw new Error(
+            "Member details were not saved. Check that this workspace is writable and try again.",
+          );
+        }
         if (member.photo && member.photo !== photo) {
           void deletePrivateAsset(member.photo).catch(() =>
             toast.warning("Member updated, but the previous private photo could not be removed."),

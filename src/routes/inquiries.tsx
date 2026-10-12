@@ -256,17 +256,19 @@ function InquiriesPage() {
     const date = new Date();
     date.setDate(date.getDate() + 1);
     date.setHours(9, 0, 0, 0);
-    updateInquiry(inquiry.id, { nextFollowUp: date.toISOString(), status: inquiry.status === "new" ? "contacted" : inquiry.status });
+    if (!updateInquiry(inquiry.id, { nextFollowUp: date.toISOString(), status: inquiry.status === "new" ? "contacted" : inquiry.status })) {
+      return toast.error("Follow-up could not be scheduled");
+    }
     toast.success(`Follow-up scheduled tomorrow for ${inquiry.name}`);
   };
 
   const moveLeadToStage = (leadId: string, stage: InquiryStatus) => {
     const inquiry = inquiries.find((item) => item.id === leadId);
     if (!inquiry || inquiry.status === stage) return;
-    updateInquiry(inquiry.id, {
+    if (!updateInquiry(inquiry.id, {
       status: stage,
       nextFollowUp: ["converted", "lost"].includes(stage) ? null : inquiry.nextFollowUp,
-    });
+    })) return toast.error("Lead could not be updated");
     toast.success(`${inquiry.name} moved to ${statusLabel(stage)}`);
   };
 
@@ -770,12 +772,12 @@ function InquiriesPage() {
                           <Select
                             value={inquiry.status}
                             onValueChange={(value) => {
-                              updateInquiry(inquiry.id, {
+                              if (!updateInquiry(inquiry.id, {
                                 status: value as InquiryStatus,
                                 nextFollowUp: ["converted", "lost"].includes(value)
                                   ? null
                                   : inquiry.nextFollowUp,
-                              });
+                              })) return toast.error("Lead could not be updated");
                               toast.success(`Lead moved to ${statusLabel(value as InquiryStatus)}`);
                             }}
                           >
@@ -913,7 +915,7 @@ function InquiriesPage() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (removing) deleteInquiry(removing.id);
+                if (removing && !deleteInquiry(removing.id)) return toast.error("Inquiry could not be deleted");
                 setRemoving(null);
                 toast.success("Inquiry deleted");
               }}
@@ -1067,10 +1069,10 @@ function InquiryFormDialog({
     };
     try {
       if (inquiry) {
-        updateInquiry(inquiry.id, payload);
+        if (!updateInquiry(inquiry.id, payload)) return toast.error("Inquiry could not be updated");
         toast.success("Inquiry updated");
       } else {
-        addInquiry(payload);
+        if (!addInquiry(payload)) return toast.error("Inquiry could not be added");
         toast.success("Inquiry added");
       }
       onOpenChange(false);

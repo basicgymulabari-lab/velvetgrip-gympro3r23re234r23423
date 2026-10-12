@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addPayment, useGym, getCurrentSession } from "@/lib/gym/store";
+import { addCustomerPayment, addPayment, useGym, getCurrentSession } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
@@ -43,7 +43,7 @@ import {
   totalRevenue,
 } from "@/lib/gym/selectors";
 import type { PaymentMethod } from "@/lib/gym/types";
-import { addMoney, sumMoney } from "@/lib/gym/money";
+import { addMoney, isPositiveMoneyAmount, sumMoney } from "@/lib/gym/money";
 
 const searchSchema = z.object({
   tab: fallback(z.string(), "collected").default("collected"),
@@ -95,7 +95,7 @@ function PaymentsPage() {
             const member = memberOf(state, p.memberId);
             return (
               !q ||
-              `${p.who} ${p.invoiceNo} ${p.note ?? ""} ${p.method} ${member?.phone ?? ""} ${member?.email ?? ""}`
+              `${p.who} ${p.invoiceNo} ${p.note ?? ""} ${p.method} ${p.payerPhone ?? ""} ${p.payerEmail ?? ""} ${member?.phone ?? ""} ${member?.email ?? ""}`
                 .toLowerCase()
                 .includes(q)
             );
@@ -134,7 +134,7 @@ function PaymentsPage() {
     <>
       <PageHeader
         title="Payment Management"
-        subtitle="Manual entries only — no gateways, everything stays on this device"
+        subtitle="Manual entries only — no payment gateway is connected. Changes sync with your gym workspace when online."
         actions={
           <Button onClick={() => setEntryOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Manual Payment
@@ -268,7 +268,8 @@ function PaymentsPage() {
                             ? state.sales.find((s) => s.id === p.saleId)
                             : undefined;
                           const payer = memberOf(state, p.memberId);
-                          const walkIn = Boolean(sale && (!payer || isWalkIn(payer)));
+                          const walkIn =
+                            p.kind === "other" || Boolean(sale && (!payer || isWalkIn(payer)));
                           const membership = p.membershipId
                             ? state.memberships.find((item) => item.id === p.membershipId)
                             : undefined;
@@ -278,13 +279,19 @@ function PaymentsPage() {
                           setInvoice({
                             invoiceNo: p.invoiceNo,
                             date: p.date,
-                            title: sale ? "Sales Invoice" : "Membership Invoice",
+                            title:
+                              sale
+                                ? "Sales Invoice"
+                                : p.kind === "other"
+                                  ? "Customer Payment Receipt"
+                                  : "Membership Invoice",
                             walkIn,
                             billedTo: p.who,
-                            contact: memberOf(state, p.memberId)?.phone ?? sale?.buyerPhone,
+                            contact:
+                              p.payerPhone ?? memberOf(state, p.memberId)?.phone ?? sale?.buyerPhone,
                             contactLines: walkIn
                               ? [
-                                  payer?.email ?? sale?.buyerEmail ?? "",
+                                  p.payerEmail ?? payer?.email ?? sale?.buyerEmail ?? "",
                                   payer?.address ?? sale?.buyerAddress ?? "",
                                 ]
                               : undefined,
@@ -429,7 +436,11 @@ function PaymentDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const state = useGym();
+  const [payerType, setPayerType] = useState<"member" | "customer">("member");
   const [memberId, setMemberId] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [note, setNote] = useState("");
@@ -453,32 +464,90 @@ function PaymentDialog({
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Member</Label>
-            <Select value={memberId} onValueChange={setMemberId}>
+            <Label>Payment for</Label>
+            <Select
+              value={payerType}
+              onValueChange={(value) => setPayerType(value as typeof payerType)}
+            >
               <SelectTrigger>
-                <SelectValue placeholder="Select member" />
+                <SelectValue />
               </SelectTrigger>
-              <SelectContent className="max-h-64">
-                {gymMembers(state).map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
+              <SelectContent>
+                <SelectItem value="member">Gym member</SelectItem>
+                <SelectItem value="customer">Walk-in / non-member customer</SelectItem>
               </SelectContent>
             </Select>
-            {memberId && (
-              <p className="text-xs text-muted-foreground">
-                Outstanding balance: {money(due, state.settings.currency)}
-              </p>
-            )}
           </div>
+          {payerType === "member" ? (
+            <div className="space-y-2">
+              <Label>Member</Label>
+              <Select value={memberId} onValueChange={setMemberId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select member" />
+                </SelectTrigger>
+                <SelectContent className="max-h-64">
+                  {gymMembers(state).map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {memberId && (
+                <p className="text-xs text-muted-foreground">
+                  Outstanding balance: {money(due, state.settings.currency)}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="payment-customer-name">Customer name</Label>
+                <Input
+                  id="payment-customer-name"
+                  value={customerName}
+                  maxLength={80}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  placeholder="Walk-in customer name"
+                  autoComplete="name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment-customer-phone">Phone (optional)</Label>
+                <Input
+                  id="payment-customer-phone"
+                  value={customerPhone}
+                  maxLength={24}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  placeholder="Phone number"
+                  inputMode="tel"
+                  autoComplete="tel"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment-customer-email">Email (optional)</Label>
+                <Input
+                  id="payment-customer-email"
+                  type="email"
+                  value={customerEmail}
+                  maxLength={254}
+                  onChange={(event) => setCustomerEmail(event.target.value)}
+                  placeholder="Email address"
+                  autoComplete="email"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                This records a customer payment only; it will not create a gym member or membership.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Amount</Label>
               <Input
                 type="number"
                 min={1}
-                max={due || undefined}
+                max={payerType === "member" ? (due || undefined) : undefined}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
@@ -500,12 +569,12 @@ function PaymentDialog({
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Note</Label>
+            <Label>Description / note</Label>
             <Input
               value={note}
               maxLength={120}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Membership payment"
+              placeholder={payerType === "member" ? "Membership payment" : "Service or other payment"}
             />
           </div>
           <div className="flex justify-end gap-2">
@@ -516,24 +585,54 @@ function PaymentDialog({
               onClick={() => {
                 if (submittingRef.current) return;
                 const value = Number(amount);
-                if (!memberId) return toast.error("Select a member");
-                if (!value || value <= 0 || Number.isNaN(value))
+                if (!isPositiveMoneyAmount(value))
                   return toast.error("Enter a valid amount");
-                if (due <= 0) return toast.error("This member has no outstanding balance");
-                if (value > due)
-                  return toast.error("Payment cannot exceed the outstanding balance");
+                if (payerType === "member") {
+                  if (!memberId) return toast.error("Select a member");
+                  if (due <= 0) return toast.error("This member has no outstanding balance");
+                  if (value > due)
+                    return toast.error("Payment cannot exceed the outstanding balance");
+                } else {
+                  if (customerName.trim().length < 2)
+                    return toast.error("Enter the customer's name");
+                  if (
+                    customerEmail.trim() &&
+                    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())
+                  )
+                    return toast.error("Enter a valid customer email");
+                  const phoneDigits = customerPhone.replace(/\D/g, "");
+                  if (
+                    customerPhone.trim() &&
+                    (phoneDigits.length < 7 || phoneDigits.length > 15)
+                  )
+                    return toast.error("Enter a valid customer phone number");
+                }
                 submittingRef.current = true;
                 try {
-                  const recorded = addPayment({
-                    memberId,
-                    membershipId: ms?.id ?? null,
-                    amount: value,
-                    method,
-                    note: note.trim() || "Manual payment entry",
-                  });
+                  const recorded =
+                    payerType === "member"
+                      ? addPayment({
+                          memberId,
+                          membershipId: ms?.id ?? null,
+                          amount: value,
+                          method,
+                          note: note.trim() || "Manual payment entry",
+                        })
+                      : addCustomerPayment({
+                          payerName: customerName,
+                          payerPhone: customerPhone,
+                          payerEmail: customerEmail,
+                          amount: value,
+                          method,
+                          note: note.trim() || "Walk-in customer payment",
+                        });
                   if (!recorded) return toast.error("Payment could not be recorded");
                   toast.success("Payment recorded and invoice generated");
+                  setPayerType("member");
                   setMemberId("");
+                  setCustomerName("");
+                  setCustomerPhone("");
+                  setCustomerEmail("");
                   setAmount("");
                   setNote("");
                   onOpenChange(false);

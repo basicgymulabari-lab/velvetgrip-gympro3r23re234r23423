@@ -121,7 +121,7 @@ const birthdayFor = (offsetDays: number, age: number) => {
 
 const MEMBER_SEED: MemberSeed[] = [
   {
-    name: "Priya Sharma",
+    name: "Aarati Karki",
     email: "demo.member1@example.com",
     phone: "0000000000",
     gender: "female",
@@ -132,7 +132,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 0.4,
   },
   {
-    name: "Rahul Das",
+    name: "Suman Thapa",
     email: "demo.member2@example.com",
     phone: "0000000000",
     gender: "male",
@@ -143,7 +143,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 0.5,
   },
   {
-    name: "Mihir Joshi",
+    name: "Bikash Gurung",
     email: "demo.member3@example.com",
     phone: "0000000000",
     gender: "male",
@@ -154,7 +154,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Aman Singh",
+    name: "Prakash Rai",
     email: "demo.member4@example.com",
     phone: "0000000000",
     gender: "male",
@@ -165,7 +165,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Sagar Chhetri",
+    name: "Nabin Shrestha",
     email: "demo.member5@example.com",
     phone: "0000000000",
     gender: "male",
@@ -176,7 +176,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Riya Sharma",
+    name: "Sabina Tamang",
     email: "demo.member6@example.com",
     phone: "0000000000",
     gender: "female",
@@ -187,7 +187,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 0.75,
   },
   {
-    name: "Neha Kapoor",
+    name: "Pooja Adhikari",
     email: "demo.member7@example.com",
     phone: "0000000000",
     gender: "female",
@@ -198,7 +198,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Vikram Rathore",
+    name: "Ramesh K.C.",
     email: "demo.member8@example.com",
     phone: "0000000000",
     gender: "male",
@@ -209,7 +209,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Ananya Iyer",
+    name: "Samikshya Bhandari",
     email: "demo.member9@example.com",
     phone: "0000000000",
     gender: "female",
@@ -220,7 +220,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Karan Mehta",
+    name: "Dipesh Poudel",
     email: "demo.member10@example.com",
     phone: "0000000000",
     gender: "male",
@@ -231,7 +231,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 0.6,
   },
   {
-    name: "Sneha Patil",
+    name: "Sunita Magar",
     email: "demo.member11@example.com",
     phone: "0000000000",
     gender: "female",
@@ -243,7 +243,7 @@ const MEMBER_SEED: MemberSeed[] = [
     frozen: true,
   },
   {
-    name: "Arjun Nair",
+    name: "Sandesh Lama",
     email: "demo.member12@example.com",
     phone: "0000000000",
     gender: "male",
@@ -254,7 +254,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Divya Menon",
+    name: "Manisha Basnet",
     email: "demo.member13@example.com",
     phone: "0000000000",
     gender: "female",
@@ -265,7 +265,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Rohit Verma",
+    name: "Utsav Khadka",
     email: "demo.member14@example.com",
     phone: "0000000000",
     gender: "male",
@@ -276,7 +276,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 0.85,
   },
   {
-    name: "Tanvi Desai",
+    name: "Kriti Gurung",
     email: "demo.member15@example.com",
     phone: "0000000000",
     gender: "female",
@@ -287,7 +287,7 @@ const MEMBER_SEED: MemberSeed[] = [
     paidRatio: 1,
   },
   {
-    name: "Imran Sheikh",
+    name: "Ashish Ghimire",
     email: "demo.member16@example.com",
     phone: "0000000000",
     gender: "male",
@@ -449,7 +449,8 @@ export function buildSeed(memberLimit = MEMBER_SEED.length): GymState {
       const qty = rand(1, 3);
       const saleId = uid("sale");
       const date = iso(addDays(now, -d));
-    const buyer = templateMembers[(d + k) % templateMembers.length];
+      const buyer = templateMembers[(d + k) % templateMembers.length];
+      const total = product.price * qty;
       sales.push({
         id: saleId,
         invoiceNo: nextInvoice(),
@@ -458,7 +459,9 @@ export function buildSeed(memberLimit = MEMBER_SEED.length): GymState {
         qty,
         unitPrice: product.price,
         unitCost: product.cost,
-        total: product.price * qty,
+        discount: 0,
+        total,
+        paid: total,
         buyer: buyer.name,
         memberId: `mem_${((d + k) % templateMembers.length) + 1}`,
         date,
@@ -468,7 +471,7 @@ export function buildSeed(memberLimit = MEMBER_SEED.length): GymState {
         invoiceNo: `INV-${invoiceSeq}`,
         saleId,
         kind: "product",
-        amount: product.price * qty,
+        amount: total,
         method: pick(["cash", "card", "bank"] as const, d),
         date,
         note: `${product.name} × ${qty}`,
@@ -477,15 +480,15 @@ export function buildSeed(memberLimit = MEMBER_SEED.length): GymState {
   }
 
   const activitySeed: Array<[Activity["type"], string, string, number]> = [
-    ["member_added", "New member registered", "Sagar Chhetri joined Annual Platinum", 0.2],
-    ["payment_received", "Payment received", "₹4,000 from Karan Mehta", 0.6],
-    ["product_sold", "Product sold", "Whey Protein 1kg × 1 sold to Neha Kapoor", 1.2],
-    ["membership_renewed", "Membership renewed", "Vikram Rathore renewed Annual Platinum", 2],
-    ["invoice_generated", "Invoice generated", "Invoice INV-1042 created for Ananya Iyer", 3],
-    ["membership_expired", "Membership expired", "Aman Singh's membership expired", 4],
+    ["member_added", "New member registered", "Nabin Shrestha joined Annual Platinum", 0.2],
+    ["payment_received", "Payment received", "₹4,000 from Dipesh Poudel", 0.6],
+    ["product_sold", "Product sold", "Whey Protein 1kg × 1 sold to Pooja Adhikari", 1.2],
+    ["membership_renewed", "Membership renewed", "Ramesh K.C. renewed Annual Platinum", 2],
+    ["invoice_generated", "Invoice generated", "Invoice INV-1042 created for Samikshya Bhandari", 3],
+    ["membership_expired", "Membership expired", "Prakash Rai's membership expired", 4],
     ["product_added", "Product added", "Knee Wraps added to inventory", 5],
-    ["member_added", "New member registered", "Neha Kapoor joined Personal Training", 7],
-    ["payment_received", "Payment received", "₹1,500 from Mihir Joshi", 8],
+    ["member_added", "New member registered", "Pooja Adhikari joined Personal Training", 7],
+    ["payment_received", "Payment received", "₹1,500 from Bikash Gurung", 8],
   ];
 
   activitySeed.forEach(([type, title, description, daysAgo]) => {

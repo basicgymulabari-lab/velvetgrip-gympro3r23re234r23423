@@ -216,14 +216,17 @@ function SettingsPage() {
                 if (!form) return toast.info("No changes to save");
                 if ((form.gymName ?? s.gymName).trim().length < 2)
                   return toast.error("Gym name is too short");
-                updateSettings({
+                if (!updateSettings({
                   gymName: (form.gymName ?? s.gymName).trim(),
                   tagline: (form.tagline ?? s.tagline).trim(),
                   phone: (form.phone ?? s.phone).trim(),
                   email: (form.email ?? s.email).trim(),
                   adminName: (form.adminName ?? s.adminName).trim(),
                   address: (form.address ?? s.address).trim(),
-                });
+                })) {
+                  toast.error("Settings were not saved. This workspace may be read-only.");
+                  return;
+                }
                 setForm(null);
                 toast.success("Settings saved");
               }}
@@ -545,8 +548,8 @@ function SettingsPage() {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 try {
-                  restoreBackup(await file.text());
-                  toast.success("Backup restored");
+                  if (restoreBackup(await file.text())) toast.success("Backup restored");
+                  else toast.error("Backup was not restored. This workspace is read-only.");
                 } catch (error) {
                   const message =
                     error instanceof Error ? error.message : "Could not read that file";
@@ -982,7 +985,10 @@ function SettingsPage() {
                 variant="destructive"
                 disabled={confirm !== "RESET"}
                 onClick={() => {
-                  resetData();
+                  if (!resetData()) {
+                    toast.error("Data was not reset. This workspace is read-only.");
+                    return;
+                  }
                   setConfirm("");
                   setResetOpen(false);
                   toast.success("All data reset");

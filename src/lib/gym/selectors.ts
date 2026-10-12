@@ -1,5 +1,11 @@
 import type { GymState, Member, MemberStatus, Membership, Payment, Product, Sale } from "./types";
-import { formatCompactDate, formatDayMonth, formatMonth, formatShortDate } from "./calendar";
+import {
+  formatCompactDate,
+  formatDayMonth,
+  formatMonth,
+  formatShortDate,
+  parseCalendarDate,
+} from "./calendar";
 import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "./money";
 
 export const DAY = 24 * 60 * 60 * 1000;
@@ -20,6 +26,15 @@ export const dateTime = (d: string | Date) =>
     minute: "2-digit",
   });
 
+/** Whether a date falls from the start of the current local month through today. */
+export function isInCurrentMonthToDate(value: string | Date, now = new Date()) {
+  const date = parseCalendarDate(value);
+  if (!Number.isFinite(date.getTime())) return false;
+
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  return date >= monthStart && date <= now;
+}
+
 export const relative = (d: string | Date) => {
   const diff = Date.now() - new Date(d).getTime();
   const mins = Math.round(diff / 60000);
@@ -32,8 +47,25 @@ export const relative = (d: string | Date) => {
   return shortDate(d);
 };
 
-export const daysUntil = (d: string | Date) =>
-  Math.ceil((new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / DAY);
+function calendarDayNumber(date: Date) {
+  if (!Number.isFinite(date.getTime())) return Number.NaN;
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY;
+}
+
+export const daysUntil = (d: string | Date, now = new Date()) =>
+  Math.round(calendarDayNumber(parseCalendarDate(d)) - calendarDayNumber(now));
+
+/** Frozen terms preserve the remaining calendar days from the moment they were paused. */
+export function membershipDaysLeft(membership: Pick<Membership, "endDate" | "frozen" | "frozenAt">) {
+  if (membership.frozen && membership.frozenAt) {
+    const frozenAt = parseCalendarDate(membership.frozenAt);
+    const endDate = parseCalendarDate(membership.endDate);
+    if (Number.isFinite(frozenAt.getTime()) && Number.isFinite(endDate.getTime())) {
+      return Math.round(calendarDayNumber(endDate) - calendarDayNumber(frozenAt));
+    }
+  }
+  return daysUntil(membership.endDate);
+}
 
 export const activeMembers = (s: GymState) => s.members.filter((m) => !m.deletedAt);
 export const trashedMembers = (s: GymState) => s.members.filter((m) => m.deletedAt);
@@ -43,10 +75,83 @@ export const gymMembers = (s: GymState) => activeMembers(s).filter((m) => !isWal
 export const livePlans = (s: GymState) => s.plans.filter((p) => !p.deletedAt);
 export const trashedPlans = (s: GymState) => s.plans.filter((p) => p.deletedAt);
 
+type SelectorIndexes = {
+  currentMembershipByMember: Map<string, Membership>;
+  paymentsByMembership: Map<string, number>;
+  paymentsBySale: Map<string, number>;
+  membershipDueByMember: Map<string, number>;
+  productDueByMember: Map<string, number>;
+  membersById: Map<string, Member>;
+  salesById: Map<string, Sale>;
+};
+
+// GymState is replaced rather than mutated by the store. Weakly caching its
+// indexes keeps dashboard selectors linear for large rosters without retaining
+// old workspaces or allowing one revision's values to leak into another.
+const selectorIndexesByState = new WeakMap<GymState, SelectorIndexes>();
+
+function addIndexedMoney(
+  index: Map<string, number>,
+  key: string | null | undefined,
+  amount: number,
+) {
+  if (!key) return;
+  index.set(key, addMoney(index.get(key) ?? 0, amount));
+}
+
+function selectorIndexes(s: GymState): SelectorIndexes {
+  const cached = selectorIndexesByState.get(s);
+  if (cached) return cached;
+
+  const currentMembershipByMember = new Map<string, Membership>();
+  const latestMembershipEndByMember = new Map<string, number>();
+  for (const membership of s.memberships) {
+    const endTime = new Date(membership.endDate).getTime();
+    const previousEnd = latestMembershipEndByMember.get(membership.memberId);
+    if (previousEnd === undefined || endTime > previousEnd) {
+      currentMembershipByMember.set(membership.memberId, membership);
+      latestMembershipEndByMember.set(membership.memberId, endTime);
+    }
+  }
+
+  const paymentsByMembership = new Map<string, number>();
+  const paymentsBySale = new Map<string, number>();
+  for (const payment of s.payments) {
+    addIndexedMoney(paymentsByMembership, payment.membershipId, payment.amount);
+    addIndexedMoney(paymentsBySale, payment.saleId, payment.amount);
+  }
+
+  const membershipDueByMember = new Map<string, number>();
+  for (const membership of s.memberships) {
+    const due = Math.max(
+      0,
+      subtractMoney(membershipPayable(membership), paymentsByMembership.get(membership.id) ?? 0),
+    );
+    addIndexedMoney(membershipDueByMember, membership.memberId, due);
+  }
+
+  const productDueByMember = new Map<string, number>();
+  for (const sale of s.sales) {
+    const paid = typeof sale.paid !== "number" ? sale.total : (paymentsBySale.get(sale.id) ?? 0);
+    const due = Math.max(0, subtractMoney(sale.total, paid));
+    addIndexedMoney(productDueByMember, sale.memberId, due);
+  }
+
+  const indexes: SelectorIndexes = {
+    currentMembershipByMember,
+    paymentsByMembership,
+    paymentsBySale,
+    membershipDueByMember,
+    productDueByMember,
+    membersById: new Map(s.members.map((member) => [member.id, member])),
+    salesById: new Map(s.sales.map((sale) => [sale.id, sale])),
+  };
+  selectorIndexesByState.set(s, indexes);
+  return indexes;
+}
+
 export function currentMembership(s: GymState, memberId: string): Membership | undefined {
-  return s.memberships
-    .filter((m) => m.memberId === memberId)
-    .sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
+  return selectorIndexes(s).currentMembershipByMember.get(memberId);
 }
 
 export function membershipHistory(s: GymState, memberId: string) {
@@ -57,7 +162,7 @@ export function membershipHistory(s: GymState, memberId: string) {
 
 export function statusOf(s: GymState, memberId: string): MemberStatus {
   const ms = currentMembership(s, memberId);
-  if (!ms) return "expired";
+  if (!ms) return "unassigned";
   if (ms.frozen) return "frozen";
   const left = daysUntil(ms.endDate);
   if (left < 0) return "expired";
@@ -65,29 +170,48 @@ export function statusOf(s: GymState, memberId: string): MemberStatus {
   return "active";
 }
 
+export type MembershipRosterEntry = {
+  member: Member;
+  ms: Membership | undefined;
+  status: MemberStatus;
+};
+
+/**
+ * Registered-member lifecycle rows shared by membership follow-up views.
+ * Members without a current term are unassigned and remain visible for follow-up
+ * rather than being counted as expired or silently dropped from the roster.
+ */
+export function membershipRoster(s: GymState): MembershipRosterEntry[] {
+  return gymMembers(s)
+    .map((member) => ({
+      member,
+      ms: currentMembership(s, member.id),
+      status: statusOf(s, member.id),
+    }))
+    .sort((a, b) => {
+      if (!a.ms) return b.ms ? 1 : a.member.name.localeCompare(b.member.name);
+      if (!b.ms) return -1;
+      return +parseCalendarDate(a.ms.endDate) - +parseCalendarDate(b.ms.endDate);
+    });
+}
+
+export const isCurrentMemberStatus = (status: MemberStatus) =>
+  status === "active" || status === "expiring";
+
 export function paidFor(s: GymState, membershipId: string) {
-  return sumMoney(
-    s.payments.filter((p) => p.membershipId === membershipId),
-    (payment) => payment.amount,
-  );
+  return selectorIndexes(s).paymentsByMembership.get(membershipId) ?? 0;
 }
 
 export function membershipPayable(membership: Membership) {
-  return addMoney(
-    subtractMoney(membership.price, membership.discount),
-    membership.joiningFee ?? 0,
-  );
+  return addMoney(subtractMoney(membership.price, membership.discount), membership.joiningFee ?? 0);
 }
 
 export function dueFor(s: GymState, memberId: string) {
-  return sumMoney(
-    s.memberships.filter((m) => m.memberId === memberId),
-    (membership) => Math.max(0, subtractMoney(membershipPayable(membership), paidFor(s, membership.id))),
-  );
+  return selectorIndexes(s).membershipDueByMember.get(memberId) ?? 0;
 }
 
 export function productDueFor(s: GymState, memberId: string) {
-  return sumMoney(salesFor(s, memberId), (sale) => saleDue(s, sale));
+  return selectorIndexes(s).productDueByMember.get(memberId) ?? 0;
 }
 
 export function outstandingFor(s: GymState, memberId: string) {
@@ -115,10 +239,7 @@ export function lowStock(s: GymState): Product[] {
 /** Amount collected against a product sale. Legacy sales were always fully paid. */
 export function salePaid(s: GymState, sale: Sale) {
   if (typeof sale.paid !== "number") return sale.total;
-  return sumMoney(
-    s.payments.filter((p) => p.saleId === sale.id),
-    (payment) => payment.amount,
-  );
+  return selectorIndexes(s).paymentsBySale.get(sale.id) ?? 0;
 }
 
 export function saleDue(s: GymState, sale: Sale) {
@@ -190,17 +311,44 @@ export function revenueSeries(s: GymState, range: Range) {
       s.payments.filter((p) => p.kind === "product" && inRange(p.date)),
       (payment) => payment.amount,
     );
-    return { label: b.label, membership, product, total: addMoney(membership, product) };
+    const other = sumMoney(
+      s.payments.filter((p) => p.kind === "other" && inRange(p.date)),
+      (payment) => payment.amount,
+    );
+    return {
+      label: b.label,
+      membership,
+      product,
+      other,
+      total: addMoney(addMoney(membership, product), other),
+    };
   });
 }
 
-export function planDistribution(s: GymState) {
+function planDistributionFor(s: GymState, activeOnly: boolean) {
+  const memberCountsByPlan = new Map<string, number>();
+  for (const member of gymMembers(s)) {
+    if (activeOnly && !isCurrentMemberStatus(statusOf(s, member.id))) continue;
+    const planId = currentMembership(s, member.id)?.planId;
+    if (planId) memberCountsByPlan.set(planId, (memberCountsByPlan.get(planId) ?? 0) + 1);
+  }
+
   return livePlans(s)
     .map((plan) => ({
       name: plan.name,
-      value: gymMembers(s).filter((m) => currentMembership(s, m.id)?.planId === plan.id).length,
+      value: memberCountsByPlan.get(plan.id) ?? 0,
     }))
     .filter((p) => p.value > 0);
+}
+
+/** Current roster distribution, including frozen and expired memberships. */
+export function planDistribution(s: GymState) {
+  return planDistributionFor(s, false);
+}
+
+/** Dashboard distribution matching the active/expiring member KPI. */
+export function activePlanDistribution(s: GymState) {
+  return planDistributionFor(s, true);
 }
 
 export function topProducts(s: GymState, limit = 5) {
@@ -214,7 +362,10 @@ export function topProducts(s: GymState, limit = 5) {
     };
     entry.units += sale.qty;
     entry.revenue = addMoney(entry.revenue, sale.total);
-    entry.profit = addMoney(entry.profit, subtractMoney(sale.total, multiplyMoney(sale.unitCost, sale.qty)));
+    entry.profit = addMoney(
+      entry.profit,
+      subtractMoney(sale.total, multiplyMoney(sale.unitCost, sale.qty)),
+    );
     map.set(sale.productId, entry);
   });
   return Array.from(map.values())
@@ -231,15 +382,17 @@ export function planOf(s: GymState, id?: string | null) {
 }
 
 export function paymentsWithNames(s: GymState): Array<Payment & { who: string }> {
+  const { membersById, salesById } = selectorIndexes(s);
   return s.payments
     .slice()
     .sort((a, b) => +new Date(b.date) - +new Date(a.date))
     .map((p) => ({
       ...p,
       who:
-        memberOf(s, p.memberId)?.name ??
-        s.sales.find((x) => x.id === p.saleId)?.buyer ??
-        "Walk-in customer",
+        p.payerName?.trim() ||
+        (membersById.get(p.memberId ?? "")?.name ??
+          salesById.get(p.saleId ?? "")?.buyer ??
+          "Walk-in customer"),
     }));
 }
 
@@ -259,15 +412,19 @@ export type Notification = {
   search?: Record<string, string>;
 };
 
-const birthdayOffset = (dob: string) => {
-  const d = new Date(dob);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+export function birthdayOffset(dob: string, now = new Date()) {
+  // DOB is a calendar date, not a time-zone-dependent instant. Taking its
+  // YYYY-MM-DD part also preserves older records saved at midnight UTC.
+  const dateOnly = /^(\d{4}-\d{2}-\d{2})/.exec(dob)?.[1] ?? dob;
+  const d = parseCalendarDate(dateOnly);
+  if (!Number.isFinite(d.getTime())) return -1;
+  const todayNumber = calendarDayNumber(now);
   let next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
-  if (next < today) next = new Date(now.getFullYear() + 1, d.getMonth(), d.getDate());
-  const diff = Math.round((next.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / DAY);
-  return diff;
-};
+  if (calendarDayNumber(next) < todayNumber) {
+    next = new Date(now.getFullYear() + 1, d.getMonth(), d.getDate());
+  }
+  return Math.round(calendarDayNumber(next) - todayNumber);
+}
 
 export function buildNotifications(s: GymState): Notification[] {
   const list: Notification[] = [];

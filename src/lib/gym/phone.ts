@@ -9,7 +9,7 @@ export const PHONE_COUNTRIES: Array<{ value: PhoneCountry; label: string; dialCo
 export const dialCodeFor = (country?: PhoneCountry) =>
   PHONE_COUNTRIES.find((option) => option.value === (country ?? "india"))?.dialCode ?? "+91";
 
-export function localPhoneDigits(value: string | undefined) {
+export function localPhoneDigits(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";
   const localNumber = trimmed.startsWith("+")
     ? trimmed.replace(/^\+\s*(?:977|91|1)\s*/, "")

@@ -34,7 +34,7 @@ import { TablePager } from "@/components/app/TablePager";
 import { AppDatePicker } from "@/components/app/AppDatePicker";
 import { PrivateAssetImage, usePrivateAssetUrl } from "@/components/app/PrivateAssetImage";
 import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
-import { subtractMoney, sumMoney } from "@/lib/gym/money";
+import { isPositiveMoneyAmount, subtractMoney, sumMoney } from "@/lib/gym/money";
 import {
   dataUrlToBlob,
   deletePrivateAsset,
@@ -720,8 +720,8 @@ function ExpenseFormDialog({
   const errors = {
     title: title.trim().length === 0 ? "Expense title is required" : "",
     amount:
-      !amount || Number.isNaN(amountValue) || amountValue <= 0
-        ? `Amount must be greater than ${currency}0`
+      !amount || !isPositiveMoneyAmount(amountValue)
+        ? `Enter a valid amount greater than ${currency}0`
         : "",
     date: futureDate ? "Future dates are not allowed" : "",
   };
@@ -780,7 +780,9 @@ function ExpenseFormDialog({
         ...(expense ? { locked } : {}),
       };
       if (expense) {
-        updateExpense(expense.id, payload);
+        if (!updateExpense(expense.id, payload)) {
+          throw new Error("Expense details could not be saved. Check the amount and try again.");
+        }
         const previousPath = expense.attachment?.path;
         if (previousPath && previousPath !== persistedAttachment?.path) {
           void deletePrivateAsset(previousPath).catch(() =>
@@ -789,7 +791,9 @@ function ExpenseFormDialog({
         }
         toast.success("Expense updated");
       } else {
-        addExpense(payload);
+        if (!addExpense(payload)) {
+          throw new Error("Expense details could not be saved. Check the amount and try again.");
+        }
         toast.success("Expense recorded");
       }
       onOpenChange(false);

@@ -18,13 +18,29 @@ import {
   Dumbbell,
   EllipsisVertical,
   Search,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   getCurrentSession,
+  getCloudSyncStatus,
+  guardPendingCloudChangesBeforeUnload,
   logoutSecurely,
   refreshCloudWorkspaceIfNewer,
+  retryCloudSync,
   useGym,
   validateCurrentSession,
 } from "@/lib/gym/store";
@@ -32,6 +48,7 @@ import { toast } from "sonner";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "./NotificationBell";
 import { GlobalSearch } from "./GlobalSearch";
+import { PlatformAppReleaseNotice } from "./PlatformAppReleaseNotice";
 import { APP_TOUR_REQUEST_KEY, OnboardingTour } from "./OnboardingTour";
 import { SubscriptionPaywall } from "./SubscriptionPaywall";
 import {
@@ -83,15 +100,26 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [paywallReason, setPaywallReason] = useState<"member-limit" | "manage">("manage");
+  const [syncStatus, setSyncStatus] = useState(getCloudSyncStatus);
+  const [retryingSync, setRetryingSync] = useState(false);
   const tourAutoChecked = useRef(false);
   const billingAutoChecked = useRef(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const subscriptionDays = localSubscriptionDaysRemaining(subscription);
+
+  useEffect(() => {
+    const guardPendingWorkspace = (event: BeforeUnloadEvent) => {
+      guardPendingCloudChangesBeforeUnload(event);
+    };
+    window.addEventListener("beforeunload", guardPendingWorkspace);
+    return () => window.removeEventListener("beforeunload", guardPendingWorkspace);
+  }, []);
 
   useEffect(() => {
     // Supabase Auth is the only authentication source. A build without public
@@ -114,8 +142,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           "Your latest change could not be saved. Check your connection and retry.",
       );
     };
+    const handleOfflineCacheError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      toast.error(detail?.message ?? "Your changes could not be saved for offline use.");
+    };
+    const updateSyncStatus = () => setSyncStatus(getCloudSyncStatus());
     window.addEventListener("ironvault:cloud-sync-error", handleSyncError);
-    return () => window.removeEventListener("ironvault:cloud-sync-error", handleSyncError);
+    window.addEventListener("ironvault:offline-cache-error", handleOfflineCacheError);
+    window.addEventListener("ironvault:cloud-sync-status", updateSyncStatus);
+    window.addEventListener("online", updateSyncStatus);
+    window.addEventListener("offline", updateSyncStatus);
+    return () => {
+      window.removeEventListener("ironvault:cloud-sync-error", handleSyncError);
+      window.removeEventListener("ironvault:offline-cache-error", handleOfflineCacheError);
+      window.removeEventListener("ironvault:cloud-sync-status", updateSyncStatus);
+      window.removeEventListener("online", updateSyncStatus);
+      window.removeEventListener("offline", updateSyncStatus);
+    };
   }, []);
 
   useEffect(() => {
@@ -308,12 +351,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [ready, sessionChecked, state]);
 
-  if (!sessionChecked || !ready || !state) {
+  const verifyingOnlineSubscription = syncStatus.online && !subscription.loaded;
+  if (!sessionChecked || !ready || !state || verifyingOnlineSubscription) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex items-center gap-3 text-muted-foreground">
           <Dumbbell className="h-5 w-5 animate-pulse text-gold" />
-          <span className="text-sm tracking-widest uppercase">Loading workspace…</span>
+          <span className="text-sm tracking-widest uppercase">
+            {verifyingOnlineSubscription ? "Verifying subscription…" : "Loading workspace…"}
+          </span>
         </div>
       </div>
     );
@@ -335,6 +381,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           return permission ? session.permissions?.[permission] : false;
         })
       : NAV;
+  const confirmLogout = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logoutSecurely();
+      setLogoutDialogOpen(false);
+      await navigate({ to: "/login", replace: true });
+    } catch {
+      toast.error("Could not finish saving or sign out. Check your connection and try again.");
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -405,6 +464,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="border-t border-sidebar-border p-4">
+            <a
+              href="/guides/gym-management-guide.pdf"
+              download
+              className="mb-3 flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-gold"
+            >
+              <BookOpen className="h-4 w-4 shrink-0" />
+              <span>Download user guide (PDF)</span>
+            </a>
             <div className="flex items-center gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-gold/40 text-xs font-semibold text-gold">
                 {session.name.slice(0, 2).toUpperCase()}
@@ -416,23 +483,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </p>
               </div>
               <button
+                type="button"
                 aria-label="Log out"
                 disabled={signingOut}
                 className="rounded-md p-2 text-muted-foreground transition-colors hover:text-destructive"
-                onClick={async () => {
-                  if (signingOut) return;
-                  setSigningOut(true);
-                  try {
-                    await logoutSecurely();
-                    await navigate({ to: "/login", replace: true });
-                  } catch {
-                    toast.error(
-                      "Could not finish saving or sign out. Check your connection and try again.",
-                    );
-                  } finally {
-                    setSigningOut(false);
-                  }
-                }}
+                onClick={() => setLogoutDialogOpen(true)}
               >
                 <LogOut className="h-4 w-4" />
               </button>
@@ -493,6 +548,82 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="flex items-center gap-2 justify-self-end">
               <button
                 type="button"
+                onClick={async () => {
+                  if (
+                    !syncStatus.online ||
+                    (!syncStatus.pending && !syncStatus.offlineSession) ||
+                    retryingSync
+                  )
+                    return;
+                  setRetryingSync(true);
+                  try {
+                    const synced = await retryCloudSync();
+                    const nextStatus = getCloudSyncStatus();
+                    setSyncStatus(nextStatus);
+                    if (!synced && !nextStatus.pending) {
+                      toast.error("Cloud sync could not be confirmed. Your device copy is preserved.");
+                    }
+                  } catch {
+                    toast.error("Cloud sync failed. Your device copy is preserved; try again later.");
+                  } finally {
+                    setRetryingSync(false);
+                  }
+                }}
+                disabled={
+                  !syncStatus.online ||
+                  (!syncStatus.pending && !syncStatus.offlineSession) ||
+                  retryingSync
+                }
+                className={cn(
+                  "inline-flex max-w-[190px] items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium sm:text-xs",
+                  !syncStatus.online || syncStatus.offlineSession
+                    ? "border-warning/35 bg-warning/10 text-warning"
+                    : syncStatus.pending
+                      ? "border-warning/35 bg-warning/10 text-warning hover:bg-warning/15"
+                      : "border-success/30 bg-success/5 text-success",
+                  (!syncStatus.online || !syncStatus.pending) && "cursor-default",
+                )}
+                title={
+                  syncStatus.message ??
+                  (!syncStatus.online || syncStatus.offlineSession
+                    ? "Using this device's saved workspace. Reconnect to revalidate and synchronize with the server."
+                    : syncStatus.pending
+                      ? "Cloud changes are pending. Click to safely retry synchronization."
+                      : "Your latest changes are synchronized with the cloud.")
+                }
+                aria-label={
+                  syncStatus.message
+                    ? "Cloud sync conflict; your device copy is preserved"
+                    : !syncStatus.online || syncStatus.offlineSession
+                      ? "Offline access; changes are saved on this device"
+                      : syncStatus.pending
+                        ? "Cloud sync pending; retry synchronization"
+                        : "Synchronized with cloud"
+                }
+              >
+                {!syncStatus.online || syncStatus.offlineSession ? (
+                  <CloudOff className="h-3.5 w-3.5 shrink-0" />
+                ) : syncStatus.pending ? (
+                  <RefreshCw
+                    className={cn("h-3.5 w-3.5 shrink-0", retryingSync && "animate-spin")}
+                  />
+                ) : (
+                  <Cloud className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate">
+                  {!syncStatus.online || syncStatus.offlineSession
+                    ? syncStatus.pending
+                      ? "Offline · changes queued"
+                      : "Offline access · saved here"
+                    : syncStatus.message
+                      ? "Sync needs attention"
+                      : syncStatus.pending
+                        ? "Sync pending · retry"
+                        : "Cloud synced"}
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setPaywallReason("manage");
                   setPaywallOpen(true);
@@ -531,7 +662,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Button asChild size="sm" className="hidden font-semibold sm:inline-flex">
                   <Link
                     to="/members"
-                    search={{ filter: "all", q: "", page: 1, new: true }}
+                    search={{ filter: "all", q: "", new: true }}
                     data-tour="add-member"
                   >
                     Add Member
@@ -543,6 +674,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
 
         <main className="px-4 py-6 sm:px-6 lg:px-8">
+          <PlatformAppReleaseNotice enabled={sessionChecked} />
           {(accessContext?.accountStatus === "suspended" ||
             accessContext?.accountStatus === "archived" ||
             accessContext?.accountStatus === "pending" ||
@@ -568,6 +700,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+
+      <AlertDialog
+        open={logoutDialogOpen}
+        onOpenChange={(nextOpen) => {
+          if (!signingOut) setLogoutDialogOpen(nextOpen);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Log out of {state.settings.gymName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to log out? You’ll need to sign in again to access this gym
+              workspace. Any pending changes must finish saving before your session ends.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={signingOut}>Stay signed in</AlertDialogCancel>
+            <Button onClick={() => void confirmLogout()} disabled={signingOut}>
+              {signingOut ? "Signing out…" : "Log out"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -170,7 +170,7 @@ function MemberProfile() {
   return (
     <>
       <Button variant="ghost" size="sm" className="mb-3 -ml-2 text-muted-foreground" asChild>
-        <Link to="/members" search={{ filter: "all", q: "", page: 1, new: false }}>
+        <Link to="/members" search={{ filter: "all", q: "", new: false }}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to members
         </Link>
       </Button>
@@ -187,8 +187,9 @@ function MemberProfile() {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  toggleFreeze(ms.id);
-                  toast.success(ms.frozen ? "Membership unfrozen" : "Membership frozen");
+                  if (toggleFreeze(ms.id))
+                    toast.success(ms.frozen ? "Membership unfrozen" : "Membership frozen");
+                  else toast.error("Membership was not changed.");
                 }}
               >
                 <Snowflake className="mr-2 h-4 w-4" /> {ms.frozen ? "Unfreeze" : "Freeze"}
@@ -228,7 +229,7 @@ function MemberProfile() {
             <dl className="mt-6 space-y-3 text-sm">
               <Info icon={Phone} value={member.phone} />
               <Info icon={Mail} value={member.email || "—"} />
-              {!walkIn && <Info icon={Cake} value={shortDate(member.dob)} />}
+              {!walkIn && <Info icon={Cake} value={shortDate(member.dob.slice(0, 10))} />}
               <Info icon={MapPin} value={member.address || "—"} />
               {!walkIn && (
                 <Info icon={ShieldAlert} value={`Emergency: ${member.emergencyContact || "—"}`} />
@@ -730,7 +731,9 @@ function MemberProfile() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (deletingNote) deleteNote(member.id, deletingNote.id);
+                if (!deletingNote || !deleteNote(member.id, deletingNote.id)) {
+                  return toast.error("Progress note could not be deleted");
+                }
                 setDeletingNote(null);
                 toast.success("Progress note deleted");
               }}
@@ -757,7 +760,9 @@ function MemberProfile() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (deletingMeasurement) deleteMeasurement(member.id, deletingMeasurement.id);
+                if (!deletingMeasurement || !deleteMeasurement(member.id, deletingMeasurement.id)) {
+                  return toast.error("Measurement could not be deleted");
+                }
                 setDeletingMeasurement(null);
                 toast.success("Measurement deleted");
               }}
@@ -911,14 +916,13 @@ function CollectBalanceDialog({
                   return toast.error("Enter an amount greater than zero");
                 if (n > balance) return toast.error("Payment cannot exceed the remaining balance");
                 const saved = membership
-                  ? (addPayment({
+                  ? addPayment({
                       memberId: membership.memberId,
                       membershipId: membership.id,
                       amount: n,
                       method,
                       note: note.trim() || `${plan?.name ?? "Membership"} — balance payment`,
-                    }),
-                    true)
+                    })
                   : addSalePayment(
                       sale!.id,
                       n,
@@ -1124,7 +1128,10 @@ export function RenewDialog({
                   toast.error("Enter a valid amount");
                   return;
                 }
-                renewMembership(memberId, planId, amount, discountAmount, paymentMethod);
+                if (!renewMembership(memberId, planId, amount, discountAmount, paymentMethod)) {
+                  toast.error("Renewal was not saved. Check the account, member and plan details.");
+                  return;
+                }
                 toast.success("Membership renewed");
                 onOpenChange(false);
                 reset();
@@ -1193,10 +1200,14 @@ function NoteDialog({
                   return;
                 }
                 if (existingNote) {
-                  updateNote(memberId, existingNote.id, { title: title.trim(), note: note.trim() });
+                  if (!updateNote(memberId, existingNote.id, { title: title.trim(), note: note.trim() })) {
+                    return toast.error("Progress note could not be updated");
+                  }
                   toast.success("Progress note updated");
                 } else {
-                  addNote(memberId, title.trim(), note.trim());
+                  if (!addNote(memberId, title.trim(), note.trim())) {
+                    return toast.error("Progress note could not be saved");
+                  }
                   toast.success("Progress note saved");
                 }
                 setTitle("");
@@ -1294,10 +1305,14 @@ function MeasurementDialog({
                 bodyFat: Number(form.bodyFat || 0),
               };
               if (measurement) {
-                updateMeasurement(memberId, measurement.id, payload);
+                if (!updateMeasurement(memberId, measurement.id, payload)) {
+                  return toast.error("Measurement could not be updated");
+                }
                 toast.success("Measurement updated");
               } else {
-                addMeasurement(memberId, payload);
+                if (!addMeasurement(memberId, payload)) {
+                  return toast.error("Measurement could not be recorded");
+                }
                 toast.success("Measurement recorded");
               }
               onOpenChange(false);

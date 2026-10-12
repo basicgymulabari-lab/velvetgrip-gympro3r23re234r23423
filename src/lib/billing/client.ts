@@ -7,6 +7,7 @@ export const FREE_MEMBER_LIMIT = 10;
 export const SUBSCRIPTION_PAYWALL_EVENT = "ironvault:subscription-paywall";
 const SUBSCRIPTION_CACHE_KEY = "ironvault.subscription-cache.v1";
 const LOCAL_SUBSCRIPTION_KEY = "ironvault.local-subscription.v1";
+const SUBSCRIPTION_VERIFY_TIMEOUT_MS = 12_000;
 
 export type SubscriptionSource = "stripe" | "razorpay" | "recharge" | "manual" | "local" | null;
 
@@ -18,6 +19,61 @@ export type SubscriptionSnapshot = {
   active: boolean;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Parse the gym-level Pro summary returned by the authenticated context RPC. */
+export function subscriptionFromGymContext(value: unknown): Omit<SubscriptionSnapshot, "active"> {
+  const context = asRecord(value);
+  const explicitStatus =
+    context?.subscription_status === "active" ||
+    context?.subscription_status === "past_due" ||
+    context?.subscription_status === "canceled" ||
+    context?.subscription_status === "expired"
+      ? context.subscription_status
+      : null;
+  const legacyPeriodEnd =
+    typeof context?.subscription_expires_at === "string"
+      ? context.subscription_expires_at
+      : null;
+  const legacyPeriodEndTime = legacyPeriodEnd ? Date.parse(legacyPeriodEnd) : Number.NaN;
+  // Existing deployed gym-context RPCs expose only expiry/expired fields.
+  // Keep staff on the gym's shared entitlement during a staggered frontend/DB
+  // rollout instead of incorrectly falling back to the free member cap.
+  const status =
+    explicitStatus ??
+    (context?.subscription_expired === true
+      ? "expired"
+      : Number.isFinite(legacyPeriodEndTime) && legacyPeriodEndTime > Date.now()
+        ? "active"
+        : "free");
+  const source =
+    context?.subscription_source === "stripe" ||
+    context?.subscription_source === "razorpay" ||
+    context?.subscription_source === "recharge" ||
+    context?.subscription_source === "manual"
+      ? context.subscription_source
+      : null;
+  return {
+    loaded: true,
+    status,
+    source,
+    currentPeriodEnd:
+      typeof context?.subscription_current_period_end === "string"
+        ? context.subscription_current_period_end
+        : legacyPeriodEnd,
+  };
+}
+
+export function setGymSubscriptionSnapshot(
+  subscription: Omit<SubscriptionSnapshot, "loaded" | "active">,
+) {
+  setSnapshot({ loaded: true, ...subscription });
+}
+
 let snapshot: SubscriptionSnapshot = {
   loaded: false,
   status: "free",
@@ -26,6 +82,27 @@ let snapshot: SubscriptionSnapshot = {
   active: false,
 };
 const listeners = new Set<() => void>();
+let subscriptionRefreshGeneration = 0;
+
+export async function withRequestDeadline<T>(
+  request: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      request,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Subscription verification timed out.")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function emit() {
   listeners.forEach((listener) => listener());
@@ -142,6 +219,7 @@ export function getSubscriptionSnapshot() {
 }
 
 export async function refreshSubscription() {
+  const generation = ++subscriptionRefreshGeneration;
   if (!isSupabaseConfigured()) {
     const local = readLocalSubscription();
     if (local) {
@@ -157,42 +235,29 @@ export async function refreshSubscription() {
     return snapshot;
   }
   try {
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) {
-      // Cached billing data is display-only. Never grant a paid entitlement
-      // when the authenticated tenant cannot be verified.
-      setSnapshot({ loaded: true, status: "free", source: null, currentPeriodEnd: null });
-      return snapshot;
-    }
-    const { data, error } = await supabase
-      .from("subscription_entitlements")
-      .select("status,source,current_period_end")
-      .maybeSingle();
-    if (error) throw error;
-    const status =
-      data?.status === "active" ||
-      data?.status === "past_due" ||
-      data?.status === "canceled" ||
-      data?.status === "expired"
-        ? data.status
-        : "free";
-    const source =
-      data?.source === "stripe" ||
-      data?.source === "razorpay" ||
-      data?.source === "recharge" ||
-      data?.source === "manual"
-        ? data.source
-        : null;
-    setSnapshot({
-      loaded: true,
-      status,
-      source,
-      currentPeriodEnd: data?.current_period_end ?? null,
-    });
+    const next = await withRequestDeadline<Omit<SubscriptionSnapshot, "active">>(
+      (async () => {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          // Cached billing data is display-only. Never grant a paid entitlement
+          // when the authenticated tenant cannot be verified.
+          return { loaded: true, status: "free" as const, source: null, currentPeriodEnd: null };
+        }
+        // Billing rows are owner-only by RLS. The authenticated gym-context
+        // RPC exposes the same gym-scoped feature entitlement to its staff.
+        const { data, error } = await supabase.rpc("get_current_gym_context");
+        if (error) throw error;
+        return subscriptionFromGymContext(data);
+      })(),
+      SUBSCRIPTION_VERIFY_TIMEOUT_MS,
+    );
+    if (generation === subscriptionRefreshGeneration) setSnapshot(next);
   } catch (error) {
     console.error("Could not refresh subscription entitlement", error);
     // Do not grant paid access when the authoritative entitlement cannot be verified.
-    setSnapshot({ loaded: true, status: "free", source: null, currentPeriodEnd: null });
+    if (generation === subscriptionRefreshGeneration) {
+      setSnapshot({ loaded: true, status: "free", source: null, currentPeriodEnd: null });
+    }
   }
   return snapshot;
 }

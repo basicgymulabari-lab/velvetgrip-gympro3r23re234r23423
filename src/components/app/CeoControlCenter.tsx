@@ -4,6 +4,7 @@ import {
   Building2,
   Database,
   Download,
+  Eye,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -23,6 +24,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
 
@@ -87,12 +96,14 @@ function metric(summary: Summary | null, name: string) {
 export function CeoControlCenter({
   onNavigate,
 }: {
-  onNavigate: (section: "invites" | "subscriptions") => void;
+  onNavigate: (section: "invites" | "subscriptions" | "migrations") => void;
 }) {
   const { revision } = usePlatformLiveUpdates();
   const [view, setView] = useState<View>("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [gyms, setGyms] = useState<GymRow[]>([]);
+  const [detailGym, setDetailGym] = useState<GymRow | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
@@ -103,6 +114,7 @@ export function CeoControlCenter({
   const [auditPage, setAuditPage] = useState(1);
   const [totalAudit, setTotalAudit] = useState(0);
   const [auditLoading, setAuditLoading] = useState(false);
+  const gymRequest = useRef(0);
   const auditRequest = useRef(0);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -114,19 +126,23 @@ export function CeoControlCenter({
     const { data, error } = await supabase.rpc("platform_dashboard_summary");
     if (error) throw error;
     setSummary((data ?? null) as Summary | null);
+    setLastUpdatedAt(new Date());
   }, []);
 
   const loadGyms = useCallback(async () => {
+    const requestId = ++gymRequest.current;
     const { data, error } = await supabase.rpc("platform_list_gyms", {
       p_search: search.trim(),
       p_status: status,
       p_page: page,
       p_page_size: pageSize,
     });
+    if (requestId !== gymRequest.current) return;
     if (error) throw error;
     const result = (data ?? []) as GymRow[];
     setGyms(result);
     setTotalGyms(Number(result[0]?.total_count ?? 0));
+    setLastUpdatedAt(new Date());
     setSelectedGym((current) =>
       result.some((gym) => gym.gym_id === current) ? current : (result[0]?.gym_id ?? ""),
     );
@@ -355,7 +371,7 @@ export function CeoControlCenter({
     <div className="space-y-6">
       <PageHeader
         title="Platform control center"
-        subtitle="A separate, server-authorized view of gym accounts. Customer business records are never editable here."
+        subtitle={`A server-authorized view of gym accounts · Customer records are never editable here · Last sync ${lastUpdatedAt ? date(lastUpdatedAt.toISOString()) : "loading"}`}
         actions={
           <Button variant="secondary" onClick={() => void refresh()} disabled={loading || busy}>
             {loading ? (
@@ -437,6 +453,9 @@ export function CeoControlCenter({
                 </Button>
                 <Button variant="secondary" onClick={() => onNavigate("subscriptions")}>
                   Manage Pro access
+                </Button>
+                <Button variant="secondary" onClick={() => onNavigate("migrations")}>
+                  <Users className="mr-2 h-4 w-4" /> Member migration
                 </Button>
               </div>
             </Panel>
@@ -546,6 +565,14 @@ export function CeoControlCenter({
                     <td className="py-3 pr-3">{date(gym.last_activity_at)}</td>
                     <td className="py-3">
                       <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          aria-label={`View details for ${gym.gym_name}`}
+                          onClick={() => setDetailGym(gym)}
+                        >
+                          <Eye className="mr-1 h-3.5 w-3.5" /> Details
+                        </Button>
                         <Button
                           size="sm"
                           variant="secondary"
@@ -698,6 +725,65 @@ export function CeoControlCenter({
           </p>
         </Panel>
       )}
+
+      <Dialog open={detailGym !== null} onOpenChange={(open) => !open && setDetailGym(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{detailGym?.gym_name ?? "Gym account"}</DialogTitle>
+            <DialogDescription>
+              Account and subscription metadata from the platform. Gym members’ private records are
+              not shown here.
+            </DialogDescription>
+          </DialogHeader>
+          {detailGym && (
+            <dl className="grid gap-3 sm:grid-cols-2">
+              {[
+                ["Owner", detailGym.owner_name || "—"],
+                ["Owner email", detailGym.owner_email || "—"],
+                ["Account status", detailGym.account_status],
+                ["Workspace members", detailGym.member_count.toLocaleString("en-IN")],
+                ["Joined platform", date(detailGym.created_at)],
+                ["Last activity", date(detailGym.last_activity_at)],
+                [
+                  "Pro access",
+                  detailGym.days_remaining
+                    ? `Active · ${detailGym.days_remaining} days remaining`
+                    : detailGym.subscription_status === "active"
+                      ? "Expired"
+                      : "Free",
+                ],
+                ["Activation source", detailGym.subscription_source || "—"],
+                ["Pro expiry", date(detailGym.subscription_expires_at)],
+              ].map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-lg border border-border bg-secondary/10 p-3">
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+                  <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
+                </div>
+              ))}
+              <div className="min-w-0 rounded-lg border border-border bg-secondary/10 p-3 sm:col-span-2">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">Workspace ID</dt>
+                <dd className="mt-1 break-all font-mono text-xs">{detailGym.gym_id}</dd>
+              </div>
+            </dl>
+          )}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDetailGym(null)}>
+              Close
+            </Button>
+            <Button
+              disabled={!detailGym}
+              onClick={() => {
+                if (!detailGym) return;
+                setSelectedGym(detailGym.gym_id);
+                setView("backups");
+                setDetailGym(null);
+              }}
+            >
+              <Database className="mr-2 h-4 w-4" /> Open backups
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={restoreBackup !== null}

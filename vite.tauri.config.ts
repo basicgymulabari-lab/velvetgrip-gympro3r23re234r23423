@@ -8,6 +8,9 @@ const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   root: path.join(projectRoot, "desktop"),
+  // Desktop's HTML entry lives in /desktop, but runtime configuration is kept
+  // beside the web app's source and must be loaded from the project root.
+  envDir: projectRoot,
   base: "./",
   publicDir: path.join(projectRoot, "public"),
   plugins: [react(), tailwindcss()],

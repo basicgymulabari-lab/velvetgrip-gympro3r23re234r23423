@@ -1,18 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import {
-  Plus,
-  RefreshCw,
-  Snowflake,
-  Trash2,
-  Pencil,
-  Lock,
-  ChevronDown,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, Snowflake, Trash2, Pencil, Lock, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
+import { TablePager } from "@/components/app/TablePager";
 import { RenewDialog } from "./members.$memberId";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,17 +14,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { isPositiveMoneyAmount, isSafeMoneyAmount, isSafeMoneySum } from "@/lib/gym/money";
 import { trashPlan, savePlan, toggleFreeze, useGym } from "@/lib/gym/store";
 import {
   activeMembers,
   currentMembership,
   livePlans,
-  daysUntil,
+  membershipRoster,
+  membershipDaysLeft,
   membershipHistory,
   money,
   planOf,
   shortDate,
-  statusOf,
 } from "@/lib/gym/selectors";
 import type { Plan } from "@/lib/gym/types";
 
@@ -58,8 +52,14 @@ export const Route = createFileRoute("/memberships")({
   ),
 });
 
+const MEMBERSHIP_PAGE_SIZE = 25;
+const MEMBERSHIP_TABS = ["all", "expiring", "expired", "frozen", "unassigned"] as const;
+type MembershipTab = (typeof MEMBERSHIP_TABS)[number];
+
 function MembershipsPage() {
   const state = useGym();
+  const [activeTab, setActiveTab] = useState<MembershipTab>("all");
+  const [page, setPage] = useState(1);
   const [planOpen, setPlanOpen] = useState(false);
   const [editing, setEditing] = useState<Plan | null>(null);
   const [renewFor, setRenewFor] = useState<string | null>(null);
@@ -69,21 +69,16 @@ function MembershipsPage() {
 
   const rows = useMemo(() => {
     if (!state) return [];
-    return activeMembers(state)
-      .map((m) => ({
-        member: m,
-        ms: currentMembership(state, m.id),
-        status: statusOf(state, m.id),
-      }))
-      .filter((r) => r.ms)
-      .sort((a, b) => +new Date(a.ms!.endDate) - +new Date(b.ms!.endDate));
+    return membershipRoster(state);
   }, [state]);
 
   if (!state) return null;
   const cur = state.settings.currency;
   const expiring = rows.filter((r) => r.status === "expiring");
-  const expired = rows.filter((r) => r.status === "expired");
+  const expired = rows.filter((r) => r.status === "expired" && r.ms);
   const frozen = rows.filter((r) => r.status === "frozen");
+  const unassigned = rows.filter((r) => r.status === "unassigned");
+  const allMemberships = rows.filter((r) => r.ms);
 
   return (
     <>
@@ -102,12 +97,13 @@ function MembershipsPage() {
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {[
           ["Active plans", String(livePlans(state).filter((p) => p.active).length)],
           ["Expiring soon", String(expiring.length)],
           ["Expired", String(expired.length)],
           ["Frozen", String(frozen.length)],
+          ["No plan", String(unassigned.length)],
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-4">
             <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
@@ -142,172 +138,236 @@ function MembershipsPage() {
         >
           <div className="overflow-hidden">
             <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
-          {livePlans(state).map((p) => (
-            <div
-              key={p.id}
-              className="group relative rounded-2xl border border-border bg-secondary/30 p-5 transition-all hover:border-gold/40"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 truncate font-display text-xl tracking-wide">
-                    {p.name}
-                    {p.locked && <Lock className="h-3.5 w-3.5 shrink-0 text-gold" />}
+              {livePlans(state).map((p) => (
+                <div
+                  key={p.id}
+                  className="group relative rounded-2xl border border-border bg-secondary/30 p-5 transition-all hover:border-gold/40"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-1.5 truncate font-display text-xl tracking-wide">
+                        {p.name}
+                        {p.locked && <Lock className="h-3.5 w-3.5 shrink-0 text-gold" />}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{p.durationDays} days</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label="Edit plan"
+                        onClick={() => {
+                          setEditing(p);
+                          setPlanOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        aria-label="Delete plan"
+                        onClick={() => (p.locked ? setLockedPlan(p) : setTrashPlanTarget(p))}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-3 font-display text-3xl text-gradient-gold">
+                    {money(p.price, cur)}
                   </p>
-                  <p className="text-xs text-muted-foreground">{p.durationDays} days</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Default joining fee: {money(p.joiningFee ?? 1000, cur)}
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">{p.description}</p>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    {
+                      activeMembers(state).filter(
+                        (m) => currentMembership(state, m.id)?.planId === p.id,
+                      ).length
+                    }{" "}
+                    members enrolled
+                  </p>
                 </div>
-                <div className="flex shrink-0 gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    aria-label="Edit plan"
-                    onClick={() => {
-                      setEditing(p);
-                      setPlanOpen(true);
-                    }}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    aria-label="Delete plan"
-                    onClick={() => (p.locked ? setLockedPlan(p) : setTrashPlanTarget(p))}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <p className="mt-3 font-display text-3xl text-gradient-gold">{money(p.price, cur)}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Default joining fee: {money(p.joiningFee ?? 1000, cur)}
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">{p.description}</p>
-              <p className="mt-3 text-xs text-muted-foreground">
-                {
-                  activeMembers(state).filter(
-                    (m) => currentMembership(state, m.id)?.planId === p.id,
-                  ).length
-                }{" "}
-                members enrolled
-              </p>
-            </div>
-          ))}
+              ))}
             </div>
           </div>
         </div>
       </section>
 
-      <Tabs defaultValue="all">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          const nextTab = value as MembershipTab;
+          if (!MEMBERSHIP_TABS.includes(nextTab)) return;
+          setActiveTab(nextTab);
+          setPage(1);
+        }}
+      >
         <TabsList className="mb-4 flex-wrap">
           <TabsTrigger value="all">All memberships</TabsTrigger>
           <TabsTrigger value="expiring">Renewal reminders ({expiring.length})</TabsTrigger>
           <TabsTrigger value="expired">Expired ({expired.length})</TabsTrigger>
           <TabsTrigger value="frozen">Frozen ({frozen.length})</TabsTrigger>
+          <TabsTrigger value="unassigned">No plan ({unassigned.length})</TabsTrigger>
         </TabsList>
 
         {(
           [
-            ["all", rows],
+            ["all", allMemberships],
             ["expiring", expiring],
             ["expired", expired],
             ["frozen", frozen],
+            ["unassigned", unassigned],
           ] as const
-        ).map(([key, list]) => (
-          <TabsContent key={key} value={key}>
-            <Panel>
-              {list.length === 0 ? (
-                <EmptyState title="Nothing here" hint="This list is currently empty." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[820px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-                        <th className="py-3">Member</th>
-                        <th className="py-3">Plan</th>
-                        <th className="py-3">Period</th>
-                        <th className="py-3">Remaining</th>
-                        <th className="py-3">Status</th>
-                        <th className="py-3">Terms</th>
-                        <th className="py-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {list.map(({ member, ms, status }) => {
-                        const left = daysUntil(ms!.endDate);
-                        return (
-                          <tr
-                            key={member.id}
-                            className="border-b border-border/50 hover:bg-secondary/40"
-                          >
-                            <td className="py-3">
-                              <Link
-                                to="/members/$memberId"
-                                params={{ memberId: member.id }}
-                                search={{ tab: undefined }}
-                                className="font-medium hover:text-gold"
-                              >
-                                {member.name}
-                              </Link>
-                              <p className="text-xs text-muted-foreground">{member.phone}</p>
-                            </td>
-                            <td className="py-3 text-muted-foreground">
-                              {planOf(state, ms!.planId)?.name}
-                            </td>
-                            <td className="py-3 text-muted-foreground">
-                              {shortDate(ms!.startDate)} → {shortDate(ms!.endDate)}
-                            </td>
-                            <td className="py-3">
-                              <span
-                                className={
-                                  left < 0 ? "text-destructive" : left <= 7 ? "text-warning" : ""
-                                }
-                              >
-                                {left < 0 ? `${Math.abs(left)}d overdue` : `${left}d left`}
-                              </span>
-                            </td>
-                            <td className="py-3">
-                              <StatusBadge status={status} />
-                            </td>
-                            <td className="py-3 text-muted-foreground">
-                              {membershipHistory(state, member.id).length}
-                            </td>
-                            <td className="py-3">
-                              <div className="flex justify-end gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  aria-label="Freeze membership"
-                                  onClick={() => {
-                                    toggleFreeze(ms!.id);
-                                    toast.success(
-                                      ms!.frozen ? "Membership unfrozen" : "Membership frozen",
-                                    );
-                                  }}
-                                >
-                                  <Snowflake className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => setRenewFor(member.id)}
-                                >
-                                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Renew
-                                </Button>
-                              </div>
-                            </td>
+        ).map(([key, list]) => {
+          const pageCount = Math.max(1, Math.ceil(list.length / MEMBERSHIP_PAGE_SIZE));
+          const currentPage = key === activeTab ? Math.min(page, pageCount) : 1;
+          const visibleRows = list.slice(
+            (currentPage - 1) * MEMBERSHIP_PAGE_SIZE,
+            currentPage * MEMBERSHIP_PAGE_SIZE,
+          );
+
+          return (
+            <TabsContent key={key} value={key}>
+              <Panel>
+                {list.length === 0 ? (
+                  <EmptyState
+                    title="Nothing here"
+                    hint={
+                      key === "unassigned"
+                        ? "These profiles have no membership term to freeze. Assign a plan only if they should begin or renew a membership."
+                        : key === "expired"
+                          ? "Only saved membership terms can expire or be frozen. Profiles without a membership term appear under No plan."
+                        : "This list is currently empty."
+                    }
+                  />
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[820px] text-sm">
+                        <thead>
+                          <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                            <th className="py-3">Member</th>
+                            <th className="py-3">Plan</th>
+                            <th className="py-3">Period</th>
+                            <th className="py-3">Remaining</th>
+                            <th className="py-3">Status</th>
+                            <th className="py-3">Terms</th>
+                            <th className="py-3 text-right">Actions</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Panel>
-          </TabsContent>
-        ))}
+                        </thead>
+                        <tbody>
+                          {visibleRows.map(({ member, ms, status }) => {
+                            const left = ms ? membershipDaysLeft(ms) : null;
+                            return (
+                              <tr
+                                key={member.id}
+                                className="border-b border-border/50 hover:bg-secondary/40"
+                              >
+                                <td className="py-3">
+                                  <Link
+                                    to="/members/$memberId"
+                                    params={{ memberId: member.id }}
+                                    search={{ tab: undefined }}
+                                    className="font-medium hover:text-gold"
+                                  >
+                                    {member.name}
+                                  </Link>
+                                  <p className="text-xs text-muted-foreground">{member.phone}</p>
+                                </td>
+                                <td className="py-3 text-muted-foreground">
+                                  {ms ? (planOf(state, ms.planId)?.name ?? "Plan unavailable") : "No plan assigned"}
+                                </td>
+                                <td className="py-3 text-muted-foreground">
+                                  {ms
+                                    ? `${shortDate(ms.startDate)} → ${shortDate(ms.endDate)}`
+                                    : "No membership term recorded"}
+                                </td>
+                                <td className="py-3">
+                                  <span
+                                    className={
+                                      left !== null && left < 0
+                                        ? "text-destructive"
+                                        : left !== null && left <= 7
+                                          ? "text-warning"
+                                          : ""
+                                    }
+                                  >
+                                    {left === null
+                                      ? "—"
+                                      : left < 0
+                                        ? `${Math.abs(left)}d overdue${ms?.frozen ? " · paused" : ""}`
+                                        : `${left}d ${ms?.frozen ? "paused" : "left"}`}
+                                  </span>
+                                </td>
+                                <td className="py-3">
+                                  <StatusBadge status={status} />
+                                </td>
+                                <td className="py-3 text-muted-foreground">
+                                  {membershipHistory(state, member.id).length}
+                                </td>
+                                <td className="py-3">
+                                  <div className="flex justify-end gap-1">
+                                    {ms && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                                        aria-label={ms.frozen ? "Unfreeze membership" : "Freeze membership"}
+                                        title={ms.frozen ? "Unfreeze membership" : "Freeze membership"}
+                                        onClick={() => {
+                                          if (toggleFreeze(ms.id))
+                                            toast.success(
+                                              ms.frozen
+                                                ? "Membership unfrozen"
+                                                : "Membership frozen",
+                                            );
+                                          else toast.error("Membership was not changed.");
+                                        }}
+                                      >
+                                        <Snowflake className="mr-1.5 h-4 w-4" />
+                                        {ms.frozen ? "Unfreeze" : "Freeze"}
+                                      </Button>
+                                    )}
+                                    {!ms && (
+                                      <span
+                                        className="px-2 text-xs text-muted-foreground"
+                                        title="A member without a membership term cannot be frozen. Assign a plan first."
+                                      >
+                                        No term to freeze
+                                      </span>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() => setRenewFor(member.id)}
+                                    >
+                                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                                      {ms ? "Renew" : "Assign plan"}
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <TablePager
+                      page={currentPage}
+                      pageSize={MEMBERSHIP_PAGE_SIZE}
+                      total={list.length}
+                      onPage={setPage}
+                    />
+                  </>
+                )}
+              </Panel>
+            </TabsContent>
+          );
+        })}
       </Tabs>
 
       {renewFor && (
@@ -334,7 +394,10 @@ function MembershipsPage() {
               <Button
                 variant="destructive"
                 onClick={() => {
-                  trashPlan(trashPlanTarget!.id);
+                  if (!trashPlan(trashPlanTarget!.id)) {
+                    toast.error("Plan was not moved to Trash.");
+                    return;
+                  }
                   toast.success("Plan moved to Trash");
                   setTrashPlanTarget(null);
                 }}
@@ -387,7 +450,7 @@ function PlanDialog({
   });
   const [touched, setTouched] = useState(false);
 
-  useMemo(() => {
+  useEffect(() => {
     if (open) {
       setForm({
         name: plan?.name ?? "",
@@ -401,12 +464,18 @@ function PlanDialog({
     }
   }, [open, plan]);
 
+  const price = Number(form.price);
+  const joiningFee = Number(form.joiningFee);
+  const durationDays = Number(form.durationDays);
   const invalid =
     form.name.trim().length < 2 ||
-    Number(form.price) <= 0 ||
-    Number(form.joiningFee) < 0 ||
-    !Number.isFinite(Number(form.durationDays)) ||
-    Number(form.durationDays) <= 0;
+    form.name.trim().length > 60 ||
+    !isPositiveMoneyAmount(price) ||
+    !isSafeMoneyAmount(joiningFee) ||
+    joiningFee < 0 ||
+    !isSafeMoneySum(price, joiningFee) ||
+    !Number.isSafeInteger(durationDays) ||
+    durationDays <= 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -449,6 +518,7 @@ function PlanDialog({
               <Input
                 type="number"
                 min={1}
+                step={1}
                 value={form.durationDays}
                 onChange={(e) => setForm((f) => ({ ...f, durationDays: e.target.value }))}
               />
@@ -477,7 +547,7 @@ function PlanDialog({
           </div>
           {touched && invalid && (
             <p className="text-xs text-destructive">
-              Provide a name, price, non-negative joining fee and duration of at least 1 day.
+              Provide a name, a representable payable amount, a non-negative joining fee and a whole-number duration of at least 1 day.
             </p>
           )}
           <div className="flex justify-end gap-2">
@@ -488,17 +558,18 @@ function PlanDialog({
               onClick={() => {
                 setTouched(true);
                 if (invalid) return;
-                savePlan({
+                const saved = savePlan({
                   id: plan?.id,
                   name: form.name.trim(),
-                  price: Number(form.price),
-                  joiningFee: Number(form.joiningFee),
-                  durationDays: Number(form.durationDays),
+                  price,
+                  joiningFee,
+                  durationDays,
                   description: form.description.trim(),
                   active: true,
                   locked: form.locked,
                   deletedAt: plan?.deletedAt ?? null,
                 });
+                if (!saved) return toast.error("The plan details are invalid and were not saved.");
                 toast.success(plan ? "Plan updated" : "Plan created");
                 onOpenChange(false);
               }}

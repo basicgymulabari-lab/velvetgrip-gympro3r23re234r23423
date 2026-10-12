@@ -54,6 +54,14 @@ insert into public.gym_workspaces (owner_id, gym_id, revision, state) values
     '{"version":1,"auth":{"email":"","passwordHash":""},"staff":{},"settings":{"gymName":"QA Gym B","adminName":"Owner B"},"members":[],"plans":[],"memberships":[],"payments":[],"products":[{"id":"product-b","name":"B Protein","cost":999,"price":1200,"stock":7}],"sales":[],"activities":[],"expenses":[{"id":"expense-b","title":"Rent B","amount":900}],"inquiries":[],"readNotifications":[],"invoiceSeq":0}'
   );
 
+insert into public.subscription_entitlements (
+  owner_id, gym_id, status, source, manual_period_end, current_period_end
+) values (
+  '51000000-0000-0000-0000-000000000001',
+  'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'active', 'manual', now() + interval '30 days', now() + interval '30 days'
+);
+
 do $$
 declare
   v_public boolean;
@@ -79,6 +87,9 @@ begin
   if public.load_current_gym_workspace() -> 'state' -> 'settings' ->> 'gymName' = 'QA Gym B' then
     raise exception 'owner A loaded Gym B';
   end if;
+  if public.get_current_gym_context() ->> 'subscription_status' <> 'active' then
+    raise exception 'owner A did not resolve its gym Pro entitlement';
+  end if;
   if not public.iv_can_access_private_object('caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/members/photo.jpg') then
     raise exception 'owner A cannot resolve its own private member object';
   end if;
@@ -94,6 +105,101 @@ begin
 end;
 $$;
 
+-- The Settings template action replaces business arrays through the same
+-- revision-checked workspace RPC. Exercise a realistic starter dataset and
+-- read it back from the server before continuing the tenant/RLS checks.
+do $$
+declare
+  v_loaded jsonb := public.load_current_gym_workspace();
+  v_state jsonb := v_loaded -> 'state';
+  v_template jsonb;
+  v_members jsonb;
+  v_memberships jsonb;
+  v_payments jsonb;
+  v_result jsonb;
+  v_reloaded jsonb;
+begin
+  select jsonb_agg(jsonb_build_object(
+    'id', format('template-member-%s', person.ordinality),
+    'type', 'member',
+    'name', person.name,
+    'email', format('template-member-%s@example.invalid', person.ordinality),
+    'phone', '9800000' || lpad(person.ordinality::text, 3, '0'),
+    'gender', case when person.ordinality % 2 = 0 then 'female' else 'male' end,
+    'dob', '1995-01-02',
+    'address', 'Kathmandu',
+    'joinDate', current_date::text,
+    'emergencyContact', '',
+    'notes', '[]'::jsonb,
+    'measurements', '[]'::jsonb,
+    'deletedAt', null
+  ) order by person.ordinality)
+  into v_members
+  from unnest(array[
+    'Aarati Karki', 'Suman Thapa', 'Nabin Oli', 'Sagar Rai', 'Riya Sharma',
+    'Prabin Gurung', 'Anisha Tamang', 'Bikash Shrestha', 'Mina Adhikari', 'Roshan Lama'
+  ]) with ordinality as person(name, ordinality);
+
+  select jsonb_agg(jsonb_build_object(
+    'id', format('template-membership-%s', member.ordinality),
+    'memberId', format('template-member-%s', member.ordinality),
+    'planId', case when member.ordinality % 2 = 0 then 'template-plan-quarterly' else 'template-plan-monthly' end,
+    'startDate', current_date::text,
+    'endDate', (current_date + 29)::text,
+    'price', case when member.ordinality % 2 = 0 then 4000 else 1500 end,
+    'discount', 0,
+    'joiningFee', 0,
+    'frozen', false,
+    'createdAt', now()
+  ) order by member.ordinality)
+  into v_memberships
+  from generate_series(1, 10) as member(ordinality);
+
+  select jsonb_agg(jsonb_build_object(
+    'id', format('template-payment-%s', member.ordinality),
+    'invoiceNo', format('QA-STARTER-%s', member.ordinality),
+    'memberId', format('template-member-%s', member.ordinality),
+    'membershipId', format('template-membership-%s', member.ordinality),
+    'kind', 'membership',
+    'amount', 300,
+    'method', 'cash',
+    'date', now(),
+    'note', 'QA starter dataset'
+  ) order by member.ordinality)
+  into v_payments
+  from generate_series(1, 10) as member(ordinality);
+
+  v_template := v_state || jsonb_build_object(
+    'members', v_members,
+    'plans', jsonb_build_array(
+      jsonb_build_object('id', 'template-plan-monthly', 'name', 'Monthly Strength', 'price', 1500, 'joiningFee', 1000, 'durationDays', 30, 'description', 'Starter plan', 'active', true),
+      jsonb_build_object('id', 'template-plan-quarterly', 'name', 'Quarterly Power', 'price', 4000, 'joiningFee', 1000, 'durationDays', 90, 'description', 'Starter plan', 'active', true)
+    ),
+    'memberships', v_memberships,
+    'payments', v_payments,
+    'products', jsonb_build_array(jsonb_build_object('id', 'template-product', 'name', 'Protein Shaker', 'category', 'Accessories', 'sku', 'QA-001', 'cost', 180, 'price', 450, 'stock', 20, 'lowStockAt', 4, 'createdAt', now())),
+    'sales', jsonb_build_array(jsonb_build_object('id', 'template-sale', 'invoiceNo', 'QA-SALE-1', 'productId', 'template-product', 'productName', 'Protein Shaker', 'qty', 1, 'unitPrice', 450, 'unitCost', 180, 'discount', 0, 'total', 450, 'paid', 450, 'buyer', 'Aarati Karki', 'memberId', 'template-member-1', 'date', now())),
+    'expenses', jsonb_build_array(jsonb_build_object('id', 'template-expense', 'title', 'Utilities', 'amount', 1000)),
+    'invoiceSeq', 1
+  );
+
+  v_result := public.save_current_gym_workspace(v_template, (v_loaded ->> 'revision')::bigint);
+  v_reloaded := public.load_current_gym_workspace() -> 'state';
+
+  if jsonb_array_length(v_reloaded -> 'members') <> 10
+    or jsonb_array_length(v_reloaded -> 'plans') <> 2
+    or jsonb_array_length(v_reloaded -> 'memberships') <> 10
+    or jsonb_array_length(v_reloaded -> 'payments') <> 10
+    or jsonb_array_length(v_reloaded -> 'products') <> 1
+    or jsonb_array_length(v_reloaded -> 'sales') <> 1
+    or jsonb_array_length(v_reloaded -> 'expenses') <> 1
+    or v_reloaded -> 'settings' ->> 'gymName' <> 'QA Gym A'
+    or (v_result ->> 'revision')::bigint <= (v_loaded ->> 'revision')::bigint then
+    raise exception 'template workspace did not persist intact across server reload';
+  end if;
+end;
+$$;
+
 select set_config('request.jwt.claim.sub', '52000000-0000-0000-0000-000000000002', true);
 do $$
 begin
@@ -103,6 +209,11 @@ begin
   if public.load_current_gym_workspace() -> 'state' -> 'settings' ->> 'gymName' <> 'QA Gym B' then
     raise exception 'owner B did not load Gym B';
   end if;
+  if public.get_current_gym_context() ->> 'subscription_status' <> 'free'
+      or public.get_current_gym_context() ->> 'subscription_source' is not null
+      or public.get_current_gym_context() ->> 'subscription_current_period_end' is not null then
+    raise exception 'owner B received Gym A subscription details';
+  end if;
 end;
 $$;
 
@@ -110,6 +221,7 @@ select set_config('request.jwt.claim.sub', '53000000-0000-0000-0000-000000000003
 do $$
 declare
   v_payload jsonb := public.load_current_gym_workspace();
+  v_context jsonb := public.get_current_gym_context();
 begin
   if public.iv_current_gym_id() <> 'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid then
     raise exception 'receptionist resolved to the wrong tenant';
@@ -125,6 +237,14 @@ begin
   end if;
   if public.iv_can_access_private_object('caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/expenses/receipt.pdf') then
     raise exception 'receptionist without expense permission can resolve expense receipt';
+  end if;
+  if exists (select 1 from public.subscription_entitlements) then
+    raise exception 'receptionist can read the protected billing row directly';
+  end if;
+  if v_context ->> 'subscription_status' <> 'active'
+      or v_context ->> 'subscription_source' <> 'manual'
+      or (v_context ->> 'subscription_current_period_end')::timestamptz <= now() then
+    raise exception 'receptionist did not resolve the gym Pro entitlement summary';
   end if;
 end;
 $$;
@@ -157,13 +277,36 @@ begin
   if v_state -> 'products' -> 0 ->> 'name' <> 'Updated by Staff' then
     raise exception 'delegated product edit did not persist';
   end if;
-  if (v_state -> 'products' -> 0 ->> 'cost')::numeric <> 100 then
+  if (v_state -> 'products' -> 0 ->> 'cost')::numeric <> 180 then
     raise exception 'receptionist overwrote owner-only product cost';
   end if;
   if jsonb_array_length(v_state -> 'expenses') <> 1
-     or v_state -> 'expenses' -> 0 ->> 'title' <> 'Rent A' then
+     or v_state -> 'expenses' -> 0 ->> 'title' <> 'Utilities' then
     raise exception 'receptionist tampered with owner-only expenses';
   end if;
+  if jsonb_array_length(v_state -> 'sales') <> 1
+     or (v_state -> 'sales' -> 0 ->> 'unitCost')::numeric <> 180
+     or (v_state -> 'sales' -> 0 ->> 'total')::numeric <> 450
+     or v_state -> 'sales' -> 0 ->> 'invoiceNo' <> 'QA-SALE-1' then
+    raise exception 'receptionist product save changed historical sale details';
+  end if;
+end;
+$$;
+
+select set_config('request.jwt.claim.sub', '53000000-0000-0000-0000-000000000003', true);
+do $$
+declare
+  v_payload jsonb := public.load_current_gym_workspace();
+  v_tampered jsonb;
+begin
+  v_tampered := jsonb_set(v_payload -> 'state', '{sales,0,total}', '1'::jsonb, false);
+  begin
+    perform public.save_current_gym_workspace(v_tampered, (v_payload ->> 'revision')::bigint);
+    raise exception 'SALE_TAMPER_ACCEPTED';
+  exception
+    when raise_exception then
+      if sqlerrm <> 'SALE_HISTORY_IMMUTABLE' then raise; end if;
+  end;
 end;
 $$;
 

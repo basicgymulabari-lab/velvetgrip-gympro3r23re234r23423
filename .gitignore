@@ -23,6 +23,12 @@ dist-tauri
 # Wrangler / Cloudflare
 .wrangler/
 src-tauri/target/
+/src-tauri/gen/
+
+# Local QA artifacts and rendered tutorial previews
+/test-results/
+/tmp/
+/dogfood-output/
 .dev.vars
 
 # Local Supabase CLI metadata

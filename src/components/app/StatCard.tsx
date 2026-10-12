@@ -61,6 +61,7 @@ export function StatusBadge({ status }: { status: string }) {
     expiring: "bg-warning/12 text-warning border-warning/35",
     expired: "bg-destructive/12 text-destructive border-destructive/35",
     frozen: "bg-info/12 text-info border-info/35",
+    unassigned: "bg-secondary text-muted-foreground border-border",
     "walk-in": "bg-gold/12 text-gold border-gold/35",
     paid: "bg-success/12 text-success border-success/35",
     partial: "bg-warning/12 text-warning border-warning/35",
