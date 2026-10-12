@@ -21,7 +21,6 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
-  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -464,14 +463,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="border-t border-sidebar-border p-4">
-            <a
-              href="/guides/gym-management-guide.pdf"
-              download
-              className="mb-3 flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-gold"
-            >
-              <BookOpen className="h-4 w-4 shrink-0" />
-              <span>Download user guide (PDF)</span>
-            </a>
             <div className="flex items-center gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-gold/40 text-xs font-semibold text-gold">
                 {session.name.slice(0, 2).toUpperCase()}
