@@ -16,6 +16,7 @@ No repository can automatically discover or repair every possible bug. These too
 npm run test:logic       # Synthetic business rules, includes 5,000-member selector/import stress cases
 npm run test:edge-security
 npm run test:e2e          # Local Chromium tests; starts Vite on 127.0.0.1:4173
+npm run test:e2e:release  # CEO release-center browser tests with a mocked backend
 npm run test:all          # Typecheck, lint, logic, edge security, build, and local E2E
 ```
 
@@ -31,6 +32,6 @@ To point k6 at a staging service, use an HTTPS hostname containing a `staging`, 
 
 ## Current coverage boundaries
 
-The checked-in Playwright suite covers CEO login gating, password visibility, member deep-link redirection, receptionist-mode selection, and password-recovery open/close without sending a reset email. It does not authenticate or verify privileged CEO/gym workflows. Those require a dedicated staging project and test identities, followed by synthetic fixtures and cleanup.
+The checked-in Playwright suites cover CEO login gating, password visibility, member deep-link redirection, receptionist-mode selection, password-recovery open/close without sending a reset email, and CEO release-center UI flows using mocked storage/database responses. The release-center tests do not publish a production release. Neither suite authenticates or verifies privileged CEO/gym workflows. Those require a dedicated staging project and test identities, followed by synthetic fixtures and cleanup.
 
 The k6 script measures only delivery of the public app-shell routes; it does not represent authenticated database throughput or full client-side rendering. The 5,000-member test in `scripts/verify-business-logic.mjs` stresses selected local selectors/import duplicate detection in memory, not Supabase or a deployed backend.
