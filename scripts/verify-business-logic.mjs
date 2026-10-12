@@ -691,6 +691,59 @@ try {
   assert(store.getState().readNotifications.includes(bulkNotificationIds.at(-1)));
   store.__setStateForLogicTests(demoState);
 
+  const checkInState = structuredClone(buildSeed(10));
+  const checkInMember = checkInState.members.find(
+    (member) =>
+      !member.deletedAt &&
+      member.type !== "walk_in" &&
+      checkInState.memberships.some((item) => item.memberId === member.id),
+  );
+  assert(checkInMember, "check-in tests need a member with a membership term");
+  const checkInMembership = selectors.currentMembership(checkInState, checkInMember.id);
+  assert(checkInMembership);
+  checkInMembership.endDate = calendar.localDateInput(new Date(Date.now() + 15 * selectors.DAY));
+  checkInMembership.frozen = false;
+  checkInMembership.frozenAt = null;
+  store.__setStateForLogicTests(checkInState);
+  assert.equal(store.checkInMember(checkInMember.id), true);
+  assert.equal(
+    selectors.hasCheckedInToday(
+      store.getState().members.find((member) => member.id === checkInMember.id),
+    ),
+    true,
+    "a successful check-in records the member's last visit for today",
+  );
+  assert.equal(
+    store.checkInMember(checkInMember.id),
+    false,
+    "a member cannot accidentally be checked in twice on the same local day",
+  );
+  const laterCheckInState = structuredClone(store.getState());
+  laterCheckInState.members.find((member) => member.id === checkInMember.id).lastCheckInAt =
+    new Date(Date.now() - 2 * selectors.DAY).toISOString();
+  store.__setStateForLogicTests(laterCheckInState);
+  assert.equal(store.checkInMember(checkInMember.id), true, "the member can check in again on a later day");
+  assert.equal(
+    store.getState().activities.filter((activity) => activity.type === "member_checked_in").length,
+    2,
+    "successful visits are visible in the activity feed",
+  );
+
+  const expiredCheckInState = structuredClone(checkInState);
+  selectors.currentMembership(expiredCheckInState, checkInMember.id).endDate =
+    calendar.localDateInput(new Date(Date.now() - 2 * selectors.DAY));
+  store.__setStateForLogicTests(expiredCheckInState);
+  assert.equal(store.checkInMember(checkInMember.id), false, "expired memberships cannot check in");
+  const frozenCheckInState = structuredClone(checkInState);
+  selectors.currentMembership(frozenCheckInState, checkInMember.id).frozen = true;
+  store.__setStateForLogicTests(frozenCheckInState);
+  assert.equal(store.checkInMember(checkInMember.id), false, "frozen memberships cannot check in");
+  const walkInCheckInState = structuredClone(checkInState);
+  walkInCheckInState.members.find((member) => member.id === checkInMember.id).type = "walk_in";
+  store.__setStateForLogicTests(walkInCheckInState);
+  assert.equal(store.checkInMember(checkInMember.id), false, "walk-in customers are not member check-ins");
+  store.__setStateForLogicTests(demoState);
+
   const assertIntegrity = (state) => {
     const unique = (items, label) => {
       const ids = items.map((item) => item.id);

@@ -6,6 +6,7 @@ import {
   Phone,
   MapPin,
   Cake,
+  CalendarCheck2,
   ShieldAlert,
   Plus,
   RefreshCw,
@@ -52,6 +53,7 @@ import {
   addNote,
   addPayment,
   addSalePayment,
+  checkInMember,
   deleteMeasurement,
   deleteNote,
   renewMembership,
@@ -67,6 +69,9 @@ import {
   membershipHistory,
   membershipPayable,
   money,
+  dateTime,
+  hasCheckedInToday,
+  isCurrentMemberStatus,
   outstandingFor,
   paidFor,
   planOf,
@@ -162,6 +167,7 @@ function MemberProfile() {
   const cur = state.settings.currency;
   const walkIn = isWalkIn(member);
   const status = walkIn ? "walk-in" : statusOf(state, member.id);
+  const checkedInToday = hasCheckedInToday(member);
   const ms = currentMembership(state, member.id);
   const due = walkIn ? outstandingFor(state, member.id) : dueFor(state, member.id);
   const payments = state.payments.filter((p) => p.memberId === member.id);
@@ -196,6 +202,22 @@ function MemberProfile() {
                 }}
               >
                 <Snowflake className="mr-2 h-4 w-4" /> {ms.frozen ? "Unfreeze" : "Freeze"}
+              </Button>
+            )}
+            {!walkIn && status !== "walk-in" && isCurrentMemberStatus(status) && (
+              <Button
+                variant="secondary"
+                disabled={checkedInToday}
+                onClick={() => {
+                  if (checkInMember(member.id)) toast.success(`${member.name} checked in.`);
+                  else
+                    toast.error(
+                      "Check-in could not be recorded. Confirm the membership is still eligible.",
+                    );
+                }}
+              >
+                <CalendarCheck2 className="mr-2 h-4 w-4" />
+                {checkedInToday ? "Checked in today" : "Check in"}
               </Button>
             )}
             {!walkIn && (
@@ -233,6 +255,16 @@ function MemberProfile() {
               <Info icon={Phone} value={member.phone} />
               <Info icon={Mail} value={member.email || "—"} />
               {!walkIn && <Info icon={Cake} value={shortDate(member.dob.slice(0, 10))} />}
+              {!walkIn && (
+                <Info
+                  icon={CalendarCheck2}
+                  value={
+                    member.lastCheckInAt
+                      ? `Last visit ${dateTime(member.lastCheckInAt)}`
+                      : "No visit recorded yet"
+                  }
+                />
+              )}
               <Info icon={MapPin} value={member.address || "—"} />
               {!walkIn && (
                 <Info icon={ShieldAlert} value={`Emergency: ${member.emergencyContact || "—"}`} />

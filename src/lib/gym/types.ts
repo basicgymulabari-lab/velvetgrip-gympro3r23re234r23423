@@ -36,6 +36,8 @@ export type Member = {
   emergencyContact: string;
   notes: ProgressNote[];
   measurements: Measurement[];
+  /** Most recent front-desk check-in; absent on legacy records. */
+  lastCheckInAt?: string | null;
   deletedAt?: string | null;
   deletedBy?: string | null;
 };
@@ -183,6 +185,7 @@ export type Inquiry = {
 
 export type ActivityType =
   | "member_added"
+  | "member_checked_in"
   | "membership_renewed"
   | "membership_expired"
   | "payment_received"

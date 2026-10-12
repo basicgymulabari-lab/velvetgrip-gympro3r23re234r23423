@@ -4,6 +4,7 @@ import {
   formatDayMonth,
   formatMonth,
   formatShortDate,
+  localDateInput,
   parseCalendarDate,
 } from "./calendar";
 import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "./money";
@@ -71,6 +72,12 @@ export const activeMembers = (s: GymState) => s.members.filter((m) => !m.deleted
 export const trashedMembers = (s: GymState) => s.members.filter((m) => m.deletedAt);
 export const isWalkIn = (member: Member) => member.type === "walk_in";
 export const gymMembers = (s: GymState) => activeMembers(s).filter((m) => !isWalkIn(m));
+
+export function hasCheckedInToday(member: Member, now = new Date()) {
+  if (!member.lastCheckInAt) return false;
+  const lastCheckIn = parseCalendarDate(member.lastCheckInAt);
+  return Number.isFinite(lastCheckIn.getTime()) && localDateInput(lastCheckIn) === localDateInput(now);
+}
 
 export const livePlans = (s: GymState) => s.plans.filter((p) => !p.deletedAt);
 export const trashedPlans = (s: GymState) => s.plans.filter((p) => p.deletedAt);

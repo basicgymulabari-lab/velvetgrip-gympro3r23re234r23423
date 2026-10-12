@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { buildSeed, uid, iso } from "./seed";
-import { configureCalendarSystem, parseCalendarDate } from "./calendar";
+import { configureCalendarSystem, localDateInput, parseCalendarDate } from "./calendar";
 import { phoneForCountry } from "./phone";
 import { membershipEndDate } from "./membership";
 import {
@@ -61,6 +61,7 @@ import {
   regularMemberCount,
   setGymSubscriptionSnapshot,
 } from "../billing/client";
+import { isCurrentMemberStatus, isWalkIn, statusOf } from "./selectors";
 
 let state: GymState | null = null;
 const listeners = new Set<() => void>();
@@ -1505,6 +1506,57 @@ export function updateMember(id: string, patch: Partial<Member>) {
   if (!saved) return false;
   auditCloud("member_updated", "member", id);
   return true;
+}
+
+/** Record one front-desk visit per member per local calendar day. */
+export function checkInMember(id: string) {
+  const at = new Date();
+  const current = getState();
+  const member = current.members.find((item) => item.id === id && !item.deletedAt);
+  if (
+    !member ||
+    isWalkIn(member) ||
+    !isCurrentMemberStatus(statusOf(current, id))
+  ) {
+    return false;
+  }
+
+  const checkInDay = localDateInput(at);
+  if (member.lastCheckInAt) {
+    const lastCheckIn = parseCalendarDate(member.lastCheckInAt);
+    if (Number.isFinite(lastCheckIn.getTime()) && localDateInput(lastCheckIn) === checkInDay)
+      return false;
+  }
+
+  const timestamp = at.toISOString();
+  return setState((st) => {
+    const latestMember = st.members.find((item) => item.id === id && !item.deletedAt);
+    if (
+      !latestMember ||
+      isWalkIn(latestMember) ||
+      !isCurrentMemberStatus(statusOf(st, id))
+    ) {
+      return st;
+    }
+    if (latestMember.lastCheckInAt) {
+      const lastCheckIn = parseCalendarDate(latestMember.lastCheckInAt);
+      if (Number.isFinite(lastCheckIn.getTime()) && localDateInput(lastCheckIn) === checkInDay)
+        return st;
+    }
+
+    const next = {
+      ...st,
+      members: st.members.map((item) =>
+        item.id === id ? { ...item, lastCheckInAt: timestamp } : item,
+      ),
+    };
+    return log(
+      next,
+      "member_checked_in",
+      "Member checked in",
+      `${latestMember.name} visited the gym`,
+    );
+  });
 }
 
 export function trashMember(id: string, by: string) {
