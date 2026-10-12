@@ -1510,6 +1510,56 @@ try {
       .length,
     11,
   );
+
+  const paymentsBeforeProfileOnly = store.getState().payments.length;
+  assert.equal(
+    store.addMember({
+      name: "Profile Only Test Member",
+      email: "profile-only@example.test",
+      phone: "9000012347",
+      gender: "other",
+      dob: "",
+      address: "Test address",
+      emergencyContact: "",
+    }),
+    true,
+    "a valid member profile can be saved without requiring a membership plan or date of birth",
+  );
+  state = store.getState();
+  const profileOnlyMember = state.members.find(
+    (item) => item.email === "profile-only@example.test",
+  );
+  assert(profileOnlyMember);
+  assert.equal(selectors.membershipHistory(state, profileOnlyMember.id).length, 0);
+  assert.equal(store.getState().payments.length, paymentsBeforeProfileOnly);
+  assert.equal(
+    store.renewMembership(profileOnlyMember.id, "plan_monthly", 0, 0, "cash", "2026-02-30"),
+    false,
+    "invalid calendar dates must not create membership terms",
+  );
+  assert.equal(
+    store.renewMembership(testMember.id, "plan_monthly", 0, 0, "cash", "2026-10-01"),
+    false,
+    "a member with prior membership history cannot use initial-assignment date override",
+  );
+  assert.equal(
+    store.renewMembership(profileOnlyMember.id, "plan_monthly", 0, 0, "cash", "2026-10-01"),
+    true,
+    "a profile-only member can receive a plan later using its actual start date",
+  );
+  state = store.getState();
+  const assignedTerm = selectors.currentMembership(state, profileOnlyMember.id);
+  assert(assignedTerm);
+  assert.equal(calendar.localDateInput(new Date(assignedTerm.startDate)), "2026-10-01");
+  assert.equal(selectors.membershipHistory(state, profileOnlyMember.id).length, 1);
+  assert.equal(store.getState().payments.length, paymentsBeforeProfileOnly);
+  assert.equal(
+    store.getState().activities[0].title,
+    "Membership assigned",
+    "initial plan assignment should be distinguishable from a renewal in the activity log",
+  );
+  assert.equal(store.trashMember(profileOnlyMember.id, "Logic test cleanup"), true);
+
   assert.equal(
     store.savePlan({
       name: "High-value test plan",
