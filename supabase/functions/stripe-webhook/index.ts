@@ -10,7 +10,7 @@ import {
   upsertEntitlement,
   verifyStripeWebhook,
 } from "../_shared/billing.ts";
-import { errorResponse, jsonResponse, optionsResponse } from "../_shared/http.ts";
+import { errorResponse, jsonResponse, optionsResponse, readLimitedBodyText } from "../_shared/http.ts";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -57,20 +57,33 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
 
   let eventKey = "";
+  let claimToken: string | null = null;
   try {
-    const rawBody = await request.text();
+    const rawBody = await readLimitedBodyText(request);
     if (!(await verifyStripeWebhook(rawBody, request.headers.get("stripe-signature")))) {
       return jsonResponse(request, { error: "Invalid Stripe signature" }, 400);
     }
     const event = JSON.parse(rawBody) as { id?: string; type?: string; data?: { object?: StripeObject } };
     eventKey = event.id ?? "";
     if (!eventKey) return jsonResponse(request, { error: "Stripe event ID is missing" }, 400);
-    const fresh = await claimWebhook("stripe", eventKey, event.type, rawBody);
-    if (!fresh) return jsonResponse(request, { received: true, duplicate: true });
+    const claim = await claimWebhook("stripe", eventKey, event.type, rawBody);
+    if (claim.status === "processed") return jsonResponse(request, { received: true, duplicate: true });
+    if (claim.status === "in_progress") {
+      return jsonResponse(
+        request,
+        { error: "This webhook event is still processing. Please retry shortly.", code: "WEBHOOK_IN_PROGRESS" },
+        503,
+      );
+    }
+    if (claim.status === "payload_conflict") {
+      return jsonResponse(request, { error: "Webhook event payload did not match its original delivery.", code: "WEBHOOK_PAYLOAD_CONFLICT" }, 409);
+    }
+    claimToken = claim.claimToken;
+    if (!claimToken) throw new Error("Webhook claim token is missing.");
 
     const object = event.data?.object;
     if (!object) {
-      await finishWebhook("stripe", eventKey, "processed");
+      await finishWebhook("stripe", eventKey, claimToken, "processed");
       return jsonResponse(request, { received: true });
     }
 
@@ -160,10 +173,12 @@ Deno.serve(async (request) => {
       }
     }
 
-    await finishWebhook("stripe", eventKey, "processed");
+    await finishWebhook("stripe", eventKey, claimToken, "processed");
     return jsonResponse(request, { received: true });
   } catch (error) {
-    if (eventKey) await finishWebhook("stripe", eventKey, "failed", "PROCESSING_ERROR").catch(() => undefined);
+    if (eventKey && claimToken) {
+      await finishWebhook("stripe", eventKey, claimToken, "failed", "PROCESSING_ERROR").catch(() => undefined);
+    }
     return errorResponse(request, error);
   }
 });

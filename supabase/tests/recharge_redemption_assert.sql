@@ -34,7 +34,7 @@ begin
 
   select code into v_assigned_code
   from public.generate_recharge_codes(
-    p_days := 45,
+    p_days := 566,
     p_count := 1,
     p_valid_days := 30,
     p_batch_label := 'assigned rollback regression test',
@@ -58,9 +58,20 @@ begin
   if v_result ->> 'status' <> 'active' or (v_result ->> 'days_added')::integer <> 15 then
     raise exception 'platform administrator could not grant manual Pro';
   end if;
+  v_result := public.platform_set_bonus_pro_days('6a000000-0000-0000-0000-00000000000a', 45);
+  if v_result ->> 'source' <> 'manual'
+    or (v_result ->> 'days_remaining_set')::integer <> 45 then
+    raise exception 'platform administrator could not set the active bonus Pro duration';
+  end if;
+  select * into v_entitlement from public.subscription_entitlements
+  where gym_id = '6a000000-0000-0000-0000-00000000000a';
+  if v_entitlement.manual_period_end < now() + interval '44 days'
+    or v_entitlement.manual_period_end > now() + interval '46 days' then
+    raise exception 'setting bonus Pro duration did not persist the requested expiry';
+  end if;
 
   select * into v_issued from public.platform_generate_recharge_code(
-    '68000000-0000-0000-0000-000000000008', 7, 30, 'manager revoke regression'
+    '68000000-0000-0000-0000-000000000008', 566, 30, 'manager revoke regression'
   );
   -- Inspect privileged code metadata through the same guarded RPC used by
   -- the CEO console. The authenticated browser role must not read the table.
@@ -70,6 +81,9 @@ begin
       and code_status = 'unused';
   if v_code_id is null or v_issued.target_email <> 'qa-recharge-a@example.invalid' then
     raise exception 'admin code was not generated for its selected account';
+  end if;
+  if v_issued.duration_days <> 566 then
+    raise exception 'a 566-day assigned code did not preserve its requested duration';
   end if;
   perform set_config('audit.manager_recharge_code', v_issued.code, true);
   perform public.platform_revoke_recharge_code(v_code_id);
@@ -127,6 +141,14 @@ begin
   end;
 
   begin
+    perform public.platform_set_bonus_pro_days('6a000000-0000-0000-0000-00000000000a', 45);
+    raise exception 'non-admin account changed a gym subscription duration';
+  exception
+    when raise_exception then
+      if sqlerrm <> 'PLATFORM_ADMIN_REQUIRED' then raise; end if;
+  end;
+
+  begin
     perform public.redeem_recharge_code(current_setting('audit.recharge_code'));
     raise exception 'code was redeemed by a second account';
   exception
@@ -164,14 +186,14 @@ declare
 begin
   perform public.platform_grant_manual_pro('6a000000-0000-0000-0000-00000000000a', 15);
   v_result := public.redeem_recharge_code(current_setting('audit.assigned_recharge_code'));
-  if v_result ->> 'status' <> 'active' or (v_result ->> 'days_added')::integer <> 45 then
+  if v_result ->> 'status' <> 'active' or (v_result ->> 'days_added')::integer <> 566 then
     raise exception 'assigned code did not grant its configured duration';
   end if;
   select * into v_entitlement
   from public.subscription_entitlements
   where owner_id = auth.uid();
-  if v_entitlement.recharge_period_end < now() + interval '104 days' then
-    raise exception 'assigned code duration was not added to current Pro access';
+  if v_entitlement.recharge_period_end < now() + interval '595 days' then
+    raise exception 'assigned code duration was not added after the existing Pro period';
   end if;
 
   perform public.platform_revoke_pro('6a000000-0000-0000-0000-00000000000a');

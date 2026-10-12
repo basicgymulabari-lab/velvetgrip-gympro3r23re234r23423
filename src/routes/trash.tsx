@@ -17,6 +17,7 @@ import {
   restoreMember,
   restorePlan,
   restoreProduct,
+  getCurrentSession,
   useGym,
 } from "@/lib/gym/store";
 import {
@@ -29,7 +30,12 @@ import {
   trashedExpenses,
 } from "@/lib/gym/selectors";
 import type { Member } from "@/lib/gym/types";
-import { openSubscriptionPaywall } from "@/lib/billing/client";
+import {
+  FREE_MEMBER_LIMIT,
+  getSubscriptionSnapshot,
+  openSubscriptionPaywall,
+  regularMemberCount,
+} from "@/lib/billing/client";
 import { deletePrivateAsset } from "@/lib/gym/storage";
 
 export const Route = createFileRoute("/trash")({
@@ -122,14 +128,38 @@ function TrashPage() {
                             size="sm"
                             variant="secondary"
                             onClick={() => {
-                              if (!restoreMember(m.id)) {
+                              if (restoreMember(m.id)) {
+                                toast.success(`${m.name} restored`);
+                                return;
+                              }
+                              const session = getCurrentSession();
+                              const readOnly =
+                                session?.accountStatus === "pending" ||
+                                session?.accountStatus === "suspended" ||
+                                session?.accountStatus === "archived" ||
+                                session?.subscriptionExpired === true;
+                              if (readOnly) {
+                                toast.error(
+                                  "This gym account is read-only; the member was not restored.",
+                                );
+                                return;
+                              }
+                              const regularMember =
+                                m.type === undefined || m.type === "member";
+                              if (
+                                regularMember &&
+                                regularMemberCount(state) >= FREE_MEMBER_LIMIT &&
+                                !getSubscriptionSnapshot().active
+                              ) {
                                 openSubscriptionPaywall("member-limit");
                                 toast.info(
                                   "Restoring this member would exceed the free 10-member limit.",
                                 );
                                 return;
                               }
-                              toast.success(`${m.name} restored`);
+                              toast.error(
+                                `${m.name} could not be restored. Please refresh and try again.`,
+                              );
                             }}
                           >
                             <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restore
@@ -199,8 +229,9 @@ function TrashPage() {
                             size="sm"
                             variant="secondary"
                             onClick={() => {
-                              restorePlan(p.id);
-                              toast.success(`${p.name} restored`);
+                              if (restorePlan(p.id)) toast.success(`${p.name} restored`);
+                              else
+                                toast.error(`${p.name} could not be restored. Please try again.`);
                             }}
                           >
                             <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restore
@@ -214,7 +245,7 @@ function TrashPage() {
                                 toast.success("Plan permanently deleted");
                               } else {
                                 toast.error(
-                                  "This plan is used by membership history and cannot be deleted permanently",
+                                  "This plan is locked, still used by membership history, or no longer in Trash.",
                                 );
                               }
                             }}
@@ -278,8 +309,8 @@ function TrashPage() {
                             size="sm"
                             variant="secondary"
                             onClick={() => {
-                              restoreProduct(p.id);
-                              toast.success(`${p.name} restored`);
+                              if (restoreProduct(p.id)) toast.success(`${p.name} restored`);
+                              else toast.error("Product could not be restored");
                             }}
                           >
                             <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restore
@@ -289,8 +320,9 @@ function TrashPage() {
                             variant="ghost"
                             className="text-destructive hover:text-destructive"
                             onClick={() => {
-                              deleteProductPermanently(p.id);
-                              toast.success("Product permanently deleted");
+                              if (deleteProductPermanently(p.id))
+                                toast.success("Product permanently deleted");
+                              else toast.error("Product could not be permanently deleted");
                             }}
                           >
                             <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete forever
@@ -354,8 +386,8 @@ function TrashPage() {
                             size="sm"
                             variant="secondary"
                             onClick={() => {
-                              restoreExpense(e.id);
-                              toast.success(`${e.title} restored`);
+                              if (restoreExpense(e.id)) toast.success(`${e.title} restored`);
+                              else toast.error("Expense could not be restored");
                             }}
                           >
                             <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restore
@@ -372,9 +404,17 @@ function TrashPage() {
                                 return;
                               }
                               try {
-                                if (e.attachment?.path) await deletePrivateAsset(e.attachment.path);
-                                if (deleteExpensePermanently(e.id)) {
-                                  toast.success("Expense permanently deleted");
+                                if (!deleteExpensePermanently(e.id)) {
+                                  toast.error("Expense was not deleted. Refresh and try again.");
+                                  return;
+                                }
+                                toast.success("Expense permanently deleted");
+                                if (e.attachment?.path) {
+                                  await deletePrivateAsset(e.attachment.path).catch(() =>
+                                    toast.warning(
+                                      "Expense deleted, but its private attachment could not be removed.",
+                                    ),
+                                  );
                                 }
                               } catch (error) {
                                 toast.error(
@@ -434,19 +474,22 @@ function ConfirmDialog({ member, onClose }: { member: Member | null; onClose: ()
               variant="destructive"
               disabled={text !== "DELETE"}
               onClick={async () => {
-                try {
-                  if (member.photo) await deletePrivateAsset(member.photo);
-                  deleteMemberPermanently(member.id);
-                  toast.success("Member permanently deleted");
-                  setText("");
-                  onClose();
-                } catch (error) {
-                  toast.error(
-                    error instanceof Error
-                      ? error.message
-                      : "The private member photo could not be removed.",
-                  );
+                if (!deleteMemberPermanently(member.id)) {
+                  toast.error("Member was not deleted. Refresh and try again.");
+                  return;
                 }
+                toast.success("Member permanently deleted");
+                if (member.photo) {
+                  try {
+                    await deletePrivateAsset(member.photo);
+                  } catch {
+                    toast.warning(
+                      "Member deleted, but the private photo could not be removed.",
+                    );
+                  }
+                }
+                setText("");
+                onClose();
               }}
             >
               Delete permanently

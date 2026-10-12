@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowRight,
@@ -17,6 +17,8 @@ import {
 import { PlatformProManager } from "@/components/app/PlatformProManager";
 import { CeoOperations } from "@/components/app/CeoOperations";
 import { CeoControlCenter } from "@/components/app/CeoControlCenter";
+import { PlatformMemberMigration } from "@/components/app/PlatformMemberMigration";
+import { PlatformReleaseCenter } from "@/components/app/PlatformReleaseCenter";
 import {
   PlatformLiveStatus,
   PlatformLiveUpdatesProvider,
@@ -26,8 +28,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 
-type AccessState = "checking" | "allowed" | "signed-out" | "denied" | "unavailable";
-type ConsoleSection = "dashboard" | "invites" | "subscriptions";
+type AccessState =
+  | "checking"
+  | "allowed"
+  | "signed-out"
+  | "denied"
+  | "unavailable";
+type ConsoleSection = "dashboard" | "invites" | "subscriptions" | "migrations" | "releases";
 
 export const Route = createFileRoute("/ceo")({
   head: () => ({
@@ -50,34 +57,66 @@ function CeoPage() {
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const checkAccess = async () => {
+  const prepareAuthenticatedAccess = useCallback(async () => {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      setAccess("signed-out");
+      return;
+    }
+
+    const { data: isAdmin, error: adminError } = await supabase.rpc("iv_is_platform_admin");
+    if (adminError) throw new Error("The platform-admin permission could not be verified.");
+    if (isAdmin !== true) {
+      await supabase.auth.signOut({ scope: "local" });
+      setAccess("denied");
+      return;
+    }
+
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+    if (factorsError) {
+      setNotice(
+        "Your unfinished CEO authenticator setup could not be checked. It remains unverified and does not block access; contact the project owner if it needs removal.",
+      );
+    } else {
+      const unfinishedCeoFactors = factors.all.filter(
+        (factor) =>
+          factor.factor_type === "totp" &&
+          factor.status === "unverified" &&
+          factor.friendly_name === "IRONVAULT CEO console",
+      );
+      for (const factor of unfinishedCeoFactors) {
+        const { error } = await supabase.auth.mfa.unenroll({ factorId: factor.id });
+        if (error) {
+          setNotice(
+            "The unfinished CEO authenticator setup could not be removed automatically. It remains unverified; contact the project owner to remove the pending factor.",
+          );
+          break;
+        }
+      }
+    }
+    setAccess("allowed");
+  }, []);
+
+  const checkAccess = useCallback(async () => {
     if (!isSupabaseConfigured()) {
       setAccess("unavailable");
       return;
     }
     setChecking(true);
     try {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData.user) {
-        setAccess("signed-out");
-        return;
-      }
-      const { data, error } = await supabase.rpc("iv_is_platform_admin");
-      if (error) {
-        setAccess("unavailable");
-        return;
-      }
-      setAccess(data === true ? "allowed" : "denied");
-    } catch {
+      setFormError("");
+      await prepareAuthenticatedAccess();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Secure access could not be verified.");
       setAccess("unavailable");
     } finally {
       setChecking(false);
     }
-  };
+  }, [prepareAuthenticatedAccess]);
 
   useEffect(() => {
     void checkAccess();
-  }, []);
+  }, [checkAccess]);
 
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -97,22 +136,9 @@ function CeoPage() {
         password,
       });
       if (error) throw new Error("Sign-in failed. Check the email and password, then try again.");
-
-      const { data, error: authorizationError } = await supabase.rpc("iv_is_platform_admin");
-      if (authorizationError) {
-        await supabase.auth.signOut({ scope: "local" });
-        setAccess("unavailable");
-        throw new Error("The platform-admin permission could not be verified. Please retry.");
-      }
-      if (data !== true) {
-        await supabase.auth.signOut({ scope: "local" });
-        setAccess("denied");
-        throw new Error("This account is not authorized for platform administration.");
-      }
-
       setPassword("");
       setFormError("");
-      setAccess("allowed");
+      await prepareAuthenticatedAccess();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Sign-in could not be completed.");
     } finally {
@@ -124,6 +150,14 @@ function CeoPage() {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
       setFormError("Enter the platform-owner email first.");
+      return;
+    }
+    const emailValidator = document.createElement("input");
+    emailValidator.type = "email";
+    emailValidator.required = true;
+    emailValidator.value = normalizedEmail;
+    if (!emailValidator.checkValidity()) {
+      setFormError("Enter a valid platform-owner email address first.");
       return;
     }
     if (!isSupabaseConfigured()) {
@@ -156,6 +190,8 @@ function CeoPage() {
       await supabase.auth.signOut({ scope: "local" });
     } finally {
       setPassword("");
+      setFormError("");
+      setNotice("");
       setAccess("signed-out");
       setChecking(false);
     }
@@ -165,7 +201,6 @@ function CeoPage() {
     const unavailable = access === "unavailable";
     const denied = access === "denied";
     const checkingAccess = access === "checking";
-
     return (
       <main className="min-h-screen bg-background px-4 py-8 sm:px-6 lg:grid lg:place-items-center lg:py-12">
         <div className="mx-auto grid w-full max-w-6xl overflow-hidden rounded-3xl border border-border bg-card shadow-2xl lg:grid-cols-[0.9fr_1.1fr]">
@@ -342,16 +377,27 @@ function CeoPage() {
                 privileged action.
               </p>
               {unavailable && (
-                <Button
-                  className="mt-5 w-full"
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void checkAccess()}
-                  disabled={checking}
-                >
-                  {checking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}Retry
-                  secure check
-                </Button>
+                <div className="mt-5 grid gap-2">
+                  <Button
+                    className="w-full"
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void checkAccess()}
+                    disabled={checking}
+                  >
+                    {checking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}Retry
+                    secure check
+                  </Button>
+                  <Button
+                    className="w-full"
+                    type="button"
+                    variant="ghost"
+                    onClick={() => void signOut()}
+                    disabled={checking}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" /> Sign out
+                  </Button>
+                </div>
               )}
             </div>
           </section>
@@ -371,6 +417,16 @@ function CeoPage() {
       id: "subscriptions",
       label: "Subscriptions & codes",
       description: "Manage Pro access and one-time codes",
+    },
+    {
+      id: "migrations",
+      label: "Member migration",
+      description: "Prepare and move member profiles safely",
+    },
+    {
+      id: "releases",
+      label: "App releases",
+      description: "Distribute verified installers and iOS links",
     },
   ];
 
@@ -403,6 +459,15 @@ function CeoPage() {
             </div>
           </header>
 
+          {notice && (
+            <div
+              role="status"
+              className="mb-5 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning"
+            >
+              {notice}
+            </div>
+          )}
+
           <div className="mb-6 rounded-2xl border border-gold/20 bg-[image:var(--gradient-surface)] p-5 sm:p-7">
             <p className="text-xs uppercase tracking-[0.18em] text-gold">Platform administration</p>
             <h1 className="mt-2 font-display text-3xl sm:text-4xl">Company operations</h1>
@@ -412,7 +477,7 @@ function CeoPage() {
             </p>
           </div>
 
-          <nav aria-label="Platform console sections" className="mb-6 grid gap-2 sm:grid-cols-3">
+          <nav aria-label="Platform console sections" className="mb-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {sections.map((item) => (
               <button
                 key={item.id}
@@ -436,11 +501,22 @@ function CeoPage() {
           )}
           {section === "invites" && <CeoOperations />}
           {section === "subscriptions" && <PlatformProManager />}
+          {section === "migrations" && <PlatformMemberMigration />}
+          {section === "releases" && <PlatformReleaseCenter />}
 
-          <footer className="mt-8 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">
-            All company-level actions require a Supabase platform-admin role and are checked again
-            by the database. This console does not expose gym members’ individual management
-            screens.
+          <footer className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">
+            <p className="max-w-3xl">
+              All company-level actions require a Supabase platform-admin role and are checked again
+              by the database. This console does not expose gym members’ individual management
+              screens.
+            </p>
+            <a
+              href="/guides/ceo-dashboard-guide.pdf"
+              download
+              className="rounded-lg border border-border bg-card px-3 py-2 font-medium text-foreground transition-colors hover:border-gold/50 hover:text-gold"
+            >
+              Download CEO guide (PDF)
+            </a>
           </footer>
         </div>
       </main>

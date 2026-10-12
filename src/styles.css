@@ -195,6 +195,23 @@
     filter: invert(72%) sepia(58%) saturate(560%) hue-rotate(1deg) brightness(94%) contrast(92%);
     opacity: 1;
   }
+
+  /* Keep Chromium's native number steppers in the same dark palette as every
+     numeric field, instead of rendering the browser-default white control. */
+  input[type="number"] {
+    color-scheme: dark;
+  }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    opacity: 0.72;
+    transition: opacity 0.15s ease;
+  }
+  input[type="number"]:hover::-webkit-inner-spin-button,
+  input[type="number"]:hover::-webkit-outer-spin-button,
+  input[type="number"]:focus-visible::-webkit-inner-spin-button,
+  input[type="number"]:focus-visible::-webkit-outer-spin-button {
+    opacity: 1;
+  }
 }
 
 @utility text-gradient-gold {

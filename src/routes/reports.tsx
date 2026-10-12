@@ -25,9 +25,9 @@ import { formatDayMonth, localDateInput } from "@/lib/gym/calendar";
 import type { GymState } from "@/lib/gym/types";
 import { addMoney, multiplyMoney, subtractMoney, sumMoney } from "@/lib/gym/money";
 import {
-  activeMembers,
   gymMembers,
   currentMembership,
+  isCurrentMemberStatus,
   metricMeta,
   metricStart,
   money,
@@ -117,7 +117,17 @@ function customRevenueSeries(state: GymState, start: string, end: string) {
       state.payments.filter((payment) => payment.kind === "product" && inBucket(payment.date)),
       (payment) => payment.amount,
     );
-    return { label: bucket.label, membership, product, total: addMoney(membership, product) };
+    const other = sumMoney(
+      state.payments.filter((payment) => payment.kind === "other" && inBucket(payment.date)),
+      (payment) => payment.amount,
+    );
+    return {
+      label: bucket.label,
+      membership,
+      product,
+      other,
+      total: addMoney(addMoney(membership, product), other),
+    };
   });
 }
 
@@ -149,9 +159,7 @@ function ReportsPage() {
   const reportRevenue =
     range === "custom"
       ? sumMoney(
-          state.payments.filter(
-            (payment) => customValid && inWindow(payment.date, selectedWindow),
-          ),
+          state.payments.filter((payment) => customValid && inWindow(payment.date, selectedWindow)),
           (payment) => payment.amount,
         )
       : revenueForMetric(state, rangeToMetric(range));
@@ -164,11 +172,8 @@ function ReportsPage() {
       : profitOfSales(state, metricStart(rangeToMetric(range)));
   const reportLabel =
     range === "custom" ? "Custom revenue" : metricMeta(rangeToMetric(range)).label;
-  const statuses = gymMembers(state).reduce<Record<string, number>>((acc, m) => {
-    const s = statusOf(state, m.id);
-    acc[s] = (acc[s] ?? 0) + 1;
-    return acc;
-  }, {});
+  const memberStatuses = gymMembers(state).map((member) => statusOf(state, member.id));
+  const activeMemberCount = memberStatuses.filter(isCurrentMemberStatus).length;
 
   const exportCsv = () => {
     const rows = [
@@ -179,7 +184,7 @@ function ReportsPage() {
       ["Selected revenue", String(reportRevenue)],
       ["Pending dues", String(totalDue(state))],
       ...(canViewProductProfit ? [["Product profit", String(reportProfit)]] : []),
-      ["Active members", String(statuses.active ?? 0)],
+      ["Active members", String(activeMemberCount)],
     ];
     const csv = rows.map((r) => r.join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -262,7 +267,7 @@ function ReportsPage() {
           [reportLabel, money(reportRevenue, cur)],
           ["Pending dues", money(totalDue(state), cur)],
           ...(canViewProductProfit ? [["Product profit", money(reportProfit, cur)]] : []),
-          ["Active members", String(statuses.active ?? 0)],
+          ["Active members", String(activeMemberCount)],
         ].map(([label, value]) => (
           <div key={label} className="surface-panel rounded-2xl p-5">
             <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>

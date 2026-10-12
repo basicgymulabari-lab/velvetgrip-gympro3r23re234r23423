@@ -49,7 +49,13 @@ import {
 } from "@/lib/gym/selectors";
 import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
 import type { GymState, PaymentMethod, Product, ProductCategory, Sale } from "@/lib/gym/types";
-import { multiplyMoney, normalizeMoney, subtractMoney } from "@/lib/gym/money";
+import {
+  isPositiveMoneyAmount,
+  isSafeMoneyAmount,
+  multiplyMoney,
+  normalizeMoney,
+  subtractMoney,
+} from "@/lib/gym/money";
 
 /** Builds the invoice view from the already-saved sale record — never regenerates one. */
 function saleInvoice(state: GymState, sale: Sale): InvoiceData {
@@ -501,7 +507,9 @@ function ProductsPage() {
               <Button
                 variant="destructive"
                 onClick={() => {
-                  if (trashFor) trashProduct(trashFor.id);
+                  if (!trashFor || !trashProduct(trashFor.id)) {
+                    return toast.error("Product could not be moved to Trash");
+                  }
                   toast.success("Product moved to Trash");
                   setTrashFor(null);
                 }}
@@ -668,6 +676,8 @@ function CollectSaleBalanceDialog({ sale, onClose }: { sale: Sale | null; onClos
   const state = useGym();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   if (!state || !sale) return null;
 
   const balance = saleDue(state, sale);
@@ -723,9 +733,22 @@ function CollectSaleBalanceDialog({ sale, onClose }: { sale: Sale | null; onClos
               Cancel
             </Button>
             <Button
-              disabled={!valid}
+              disabled={!valid || submitting}
               onClick={() => {
-                if (!addSalePayment(sale.id, value, method)) {
+                if (submittingRef.current || !valid) return;
+                submittingRef.current = true;
+                setSubmitting(true);
+                let recorded = false;
+                try {
+                  recorded = addSalePayment(sale.id, value, method);
+                } catch {
+                  submittingRef.current = false;
+                  setSubmitting(false);
+                  return toast.error("Payment could not be recorded");
+                }
+                if (!recorded) {
+                  submittingRef.current = false;
+                  setSubmitting(false);
                   return toast.error("Payment could not be recorded");
                 }
                 toast.success(value === balance ? "Sale paid in full" : "Payment recorded");
@@ -733,7 +756,7 @@ function CollectSaleBalanceDialog({ sale, onClose }: { sale: Sale | null; onClos
                 onClose();
               }}
             >
-              Record payment
+              {submitting ? "Recording…" : "Record payment"}
             </Button>
           </div>
         </div>
@@ -764,7 +787,7 @@ function ProductDialog({
     locked: false,
   });
 
-  useMemo(() => {
+  useEffect(() => {
     if (open) {
       setForm({
         name: product?.name ?? "",
@@ -883,19 +906,35 @@ function ProductDialog({
             <Button
               onClick={() => {
                 if (form.name.trim().length < 2) return toast.error("Enter a product name");
-                if (Number(form.price) <= 0) return toast.error("Enter a valid selling price");
-                saveProduct({
+                const cost = form.cost.trim() === "" ? 0 : Number(form.cost);
+                const price = Number(form.price);
+                const stock = form.stock.trim() === "" ? 0 : Number(form.stock);
+                const lowStockAt = form.lowStockAt.trim() === "" ? 0 : Number(form.lowStockAt);
+                if (!isSafeMoneyAmount(cost) || cost < 0)
+                  return toast.error("Enter a valid non-negative cost price.");
+                if (!isPositiveMoneyAmount(price))
+                  return toast.error("Enter a valid selling price greater than zero.");
+                if (
+                  !Number.isSafeInteger(stock) ||
+                  stock < 0 ||
+                  !Number.isSafeInteger(lowStockAt) ||
+                  lowStockAt < 0
+                ) {
+                  return toast.error("Stock and low-stock alert must be non-negative whole numbers.");
+                }
+                const saved = saveProduct({
                   id: product?.id,
                   name: form.name.trim(),
                   category: form.category,
                   sku: form.sku.trim() || form.name.trim().slice(0, 6).toUpperCase(),
-                  cost: Number(form.cost) || 0,
-                  price: Number(form.price),
-                  stock: Number(form.stock) || 0,
-                  lowStockAt: Number(form.lowStockAt) || 0,
+                  cost,
+                  price,
+                  stock,
+                  lowStockAt,
                   locked: form.locked,
                   deletedAt: product?.deletedAt ?? null,
                 });
+                if (!saved) return toast.error("The product details are invalid and were not saved.");
                 toast.success(product ? "Product updated" : "Product added");
                 onOpenChange(false);
               }}
@@ -927,15 +966,28 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   if (!state || !product) return null;
   const cur = state.settings.currency;
   const n = Number(qty);
-  const qtyValid = Number.isInteger(n) && n >= 1 && n <= product.stock;
-  const gross = multiplyMoney(product.price, qtyValid ? n : 0);
+  const unitPriceValid = isPositiveMoneyAmount(product.price);
+  const quantityIsInStock =
+    Number.isSafeInteger(n) &&
+    Number.isSafeInteger(product.stock) &&
+    product.stock >= 0 &&
+    n >= 1 &&
+    n <= product.stock;
+  const qtyValid =
+    unitPriceValid &&
+    quantityIsInStock &&
+    Number.isSafeInteger(Math.round(product.price * 100) * n);
+  const gross = unitPriceValid ? multiplyMoney(product.price, qtyValid ? n : 0) : 0;
+  const discountInput = Number(discountValue);
   const rawDiscount =
     discountType === "none"
       ? 0
       : discountType === "percent"
-        ? (gross * (Number(discountValue) || 0)) / 100
-        : Number(discountValue) || 0;
-  const discountAmount = Math.min(Math.max(0, normalizeMoney(rawDiscount)), gross);
+        ? (gross * (Number.isFinite(discountInput) ? discountInput : 0)) / 100
+        : Number.isFinite(discountInput)
+          ? discountInput
+          : 0;
+  const discountAmount = normalizeMoney(Math.min(Math.max(0, rawDiscount), gross));
   const discountValid =
     discountType === "none" ||
     (discountValue !== "" &&
@@ -945,7 +997,10 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
   const total = subtractMoney(gross, discountAmount);
   const paidNum = Number(paid);
   const paidEntered = paid.trim() !== "";
-  const paidValid = paidEntered && Number.isFinite(paidNum) && paidNum >= 0 && paidNum <= total;
+  const paidValid =
+    paidEntered &&
+    (paidNum === 0 || isPositiveMoneyAmount(paidNum)) &&
+    paidNum <= total;
   const remaining = Math.max(0, subtractMoney(total, paidValid ? paidNum : 0));
   const isWalkIn = memberId === "walkin";
   const walkInValid =
@@ -1185,7 +1240,7 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
                   ? null
                   : activeMembers(state).find((m) => m.id === memberId);
                 try {
-                  sellProduct(
+                  const saved = sellProduct(
                     product.id,
                     n,
                     member?.name ?? (walkName.trim() || "Walk-in customer"),
@@ -1199,6 +1254,11 @@ function SellDialog({ product, onClose }: { product: Product | null; onClose: ()
                       buyerAddress: member?.address ?? (walkAddress.trim() || undefined),
                     },
                   );
+                  if (!saved) {
+                    return toast.error(
+                      "The sale could not be recorded. Check stock and amount limits, then try again.",
+                    );
+                  }
                   toast.success("Sale recorded");
                   reset();
                   onClose();

@@ -23,8 +23,9 @@ function allowedOrigins() {
 export function corsHeaders(request: Request) {
   const origin = request.headers.get("origin") ?? "";
   const allowed = allowedOrigins();
-  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  const selected = allowed.has(origin) || local ? origin : Deno.env.get("APP_ORIGIN") ?? "";
+  // Match configured origins exactly. Broad localhost exceptions leak into
+  // production deployments and can authorize arbitrary local web apps.
+  const selected = allowed.has(origin) ? origin : Deno.env.get("APP_ORIGIN") ?? "";
   return {
     "Access-Control-Allow-Origin": selected,
     "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, idempotency-key, stripe-signature, x-razorpay-signature",
@@ -50,6 +51,49 @@ export function jsonResponse(request: Request, body: unknown, status = 200) {
   });
 }
 
+const DEFAULT_MAX_REQUEST_BYTES = 1024 * 1024;
+
+export async function readLimitedBodyText(
+  request: Request,
+  maxBytes = DEFAULT_MAX_REQUEST_BYTES,
+) {
+  const body = request.body;
+  if (!body) return "";
+
+  const contentLength = request.headers.get("content-length")?.trim() ?? "";
+  if (/^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
+    void body.cancel().catch(() => undefined);
+    throw new HttpError("The request body is too large.", 413, "PAYLOAD_TOO_LARGE");
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new HttpError("The request body is too large.", 413, "PAYLOAD_TOO_LARGE");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 export function errorResponse(request: Request, error: unknown) {
   if (error instanceof HttpError) {
     return jsonResponse(request, { error: error.message, code: error.code }, error.status);
@@ -68,12 +112,13 @@ export async function parseJson<T extends Record<string, unknown>>(request: Requ
     throw new HttpError("Expected a JSON request body.", 415, "UNSUPPORTED_MEDIA_TYPE");
   }
   try {
-    const body = await request.json();
+    const body = JSON.parse(await readLimitedBodyText(request));
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new Error("not an object");
     }
     return body as T;
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
     throw new HttpError("The request body is invalid.", 400, "INVALID_JSON");
   }
 }

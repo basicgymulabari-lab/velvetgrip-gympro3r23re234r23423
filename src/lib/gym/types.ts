@@ -77,7 +77,11 @@ export type Payment = {
   memberId?: ID | null;
   membershipId?: ID | null;
   saleId?: ID | null;
-  kind: "membership" | "product";
+  kind: "membership" | "product" | "other";
+  /** Payer details for standalone walk-in payments that are not member records. */
+  payerName?: string;
+  payerPhone?: string;
+  payerEmail?: string;
   amount: number;
   method: PaymentMethod;
   date: string;
@@ -264,4 +268,4 @@ export type GymState = {
   invoiceSeq: number;
 };
 
-export type MemberStatus = "active" | "expired" | "frozen" | "expiring";
+export type MemberStatus = "active" | "expired" | "frozen" | "expiring" | "unassigned";

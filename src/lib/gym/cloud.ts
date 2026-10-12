@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from "../../integrations/supabase/client";
 import type { Json } from "../../integrations/supabase/types";
+import { subscriptionFromGymContext } from "../billing/client";
 import type { GymState, ReceptionistPermissions } from "./types";
 
 export type CloudGymRole = "owner" | "receptionist";
@@ -14,6 +15,9 @@ export type CloudGymContext = {
   gymName: string;
   accountStatus: "pending" | "active" | "suspended" | "archived";
   subscriptionExpired: boolean;
+  subscriptionStatus: "free" | "active" | "past_due" | "canceled" | "expired";
+  subscriptionSource: "stripe" | "razorpay" | "recharge" | "manual" | null;
+  subscriptionCurrentPeriodEnd: string | null;
 };
 
 export type CloudWorkspace = CloudGymContext & {
@@ -64,10 +68,14 @@ const DEFAULT_CLOUD_RECEPTIONIST_PERMISSIONS: ReceptionistPermissions = {
   viewRevenue: false,
 };
 
-function contextFrom(value: unknown): CloudGymContext | null {
+export function cloudGymContextFrom(value: unknown): CloudGymContext | null {
   const row = asRecord(value);
   if (!row || typeof row.gym_id !== "string") return null;
   if (row.role !== "owner" && row.role !== "receptionist") return null;
+  // Older deployed context RPCs return the legacy expiry fields instead of
+  // subscription_status. Use the same gym-scoped parser as the Pro badge so
+  // receptionist offline sessions preserve the owner's shared entitlement.
+  const subscription = subscriptionFromGymContext(row);
   return {
     gymId: row.gym_id,
     role: row.role,
@@ -83,6 +91,15 @@ function contextFrom(value: unknown): CloudGymContext | null {
         ? row.account_status
         : "active",
     subscriptionExpired: row.subscription_expired === true,
+    subscriptionStatus: subscription.status,
+    subscriptionSource:
+      subscription.source === "stripe" ||
+      subscription.source === "razorpay" ||
+      subscription.source === "recharge" ||
+      subscription.source === "manual"
+        ? subscription.source
+        : null,
+    subscriptionCurrentPeriodEnd: subscription.currentPeriodEnd,
   };
 }
 
@@ -102,10 +119,25 @@ export async function getCloudIdentity() {
   };
 }
 
+/** Reads the locally persisted Supabase identity without making a network request. */
+export async function getCachedCloudIdentity() {
+  if (!isSupabaseConfigured()) return null;
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  const user = data.session?.user;
+  if (!user) return null;
+  return {
+    id: user.id,
+    email: user.email ?? "",
+    name: String(user.user_metadata?.full_name ?? "Gym Owner"),
+    gymName: String(user.user_metadata?.gym_name ?? "My Gym"),
+  };
+}
+
 export async function getCloudGymContext(): Promise<CloudGymContext | null> {
   const { data, error } = await supabase.rpc("get_current_gym_context");
   if (error) throw error;
-  return contextFrom(data);
+  return cloudGymContextFrom(data);
 }
 
 export async function ensureOwnerGym(
@@ -117,7 +149,7 @@ export async function ensureOwnerGym(
     p_initial_state: initialState as unknown as Json,
   });
   if (error) throw error;
-  const context = contextFrom(data);
+  const context = cloudGymContextFrom(data);
   if (!context) throw new Error("Gym workspace could not be created.");
   return context;
 }
@@ -148,7 +180,7 @@ export async function loadCloudWorkspace(): Promise<CloudWorkspace | null> {
   if (error) throw error;
   const row = asRecord(data);
   if (!row) return null;
-  const context = contextFrom(row);
+  const context = cloudGymContextFrom(row);
   const workspace = asRecord(row.state);
   const revision = typeof row.revision === "number" ? row.revision : Number(row.revision);
   if (!context || !workspace || !Number.isFinite(revision)) return null;

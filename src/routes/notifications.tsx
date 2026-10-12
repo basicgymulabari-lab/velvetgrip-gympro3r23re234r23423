@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   BellRing,
   CalendarClock,
@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/AppShell";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
+import { TablePager } from "@/components/app/TablePager";
 import { Button } from "@/components/ui/button";
 import { markNotificationsRead, useGym } from "@/lib/gym/store";
 import {
@@ -38,9 +39,25 @@ type Reminder = {
   message: string;
 };
 
+const PAGE_SIZE = 25;
+
+function pageSlice<T>(items: T[], page: number) {
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  return {
+    page: safePage,
+    pageCount,
+    items: items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+  };
+}
+
 const REMINDER_META = {
   expiry: { label: "Renewal", icon: CalendarClock, className: "text-warning bg-warning/10" },
-  due: { label: "Payment due", icon: CircleDollarSign, className: "text-destructive bg-destructive/10" },
+  due: {
+    label: "Payment due",
+    icon: CircleDollarSign,
+    className: "text-destructive bg-destructive/10",
+  },
   follow_up: { label: "Inquiry", icon: UserRoundSearch, className: "text-info bg-info/10" },
 } as const;
 
@@ -126,7 +143,9 @@ function sendReminder(reminder: Reminder, channel: "whatsapp" | "sms" | "email")
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  toast.success(`${channel === "whatsapp" ? "WhatsApp" : channel === "sms" ? "SMS" : "Email"} message prepared for ${reminder.name}`);
+  toast.success(
+    `${channel === "whatsapp" ? "WhatsApp" : channel === "sms" ? "SMS" : "Email"} message prepared for ${reminder.name}`,
+  );
 }
 
 export const Route = createFileRoute("/notifications")({
@@ -154,12 +173,16 @@ export const Route = createFileRoute("/notifications")({
 
 function NotificationsPage() {
   const state = useGym();
+  const [reminderPage, setReminderPage] = useState(1);
+  const [notificationPage, setNotificationPage] = useState(1);
   const items = useMemo(() => (state ? buildNotifications(state) : []), [state]);
   const reminders = useMemo(() => (state ? buildReminderQueue(state) : []), [state]);
   if (!state) return null;
 
   const read = new Set(state.readNotifications);
   const unread = items.filter((n) => !read.has(n.id));
+  const reminderPageView = pageSlice(reminders, reminderPage);
+  const notificationPageView = pageSlice(items, notificationPage);
 
   return (
     <>
@@ -171,8 +194,11 @@ function NotificationsPage() {
             variant="secondary"
             disabled={unread.length === 0}
             onClick={() => {
-              markNotificationsRead(items.map((n) => n.id));
-              toast.success("All notifications marked as read");
+              if (markNotificationsRead(items.map((n) => n.id))) {
+                toast.success("All notifications marked as read");
+              } else {
+                toast.error("Notifications could not be updated");
+              }
             }}
           >
             <CheckCheck className="mr-2 h-4 w-4" /> Mark all read
@@ -196,8 +222,13 @@ function NotificationsPage() {
             const Icon = meta.icon;
             const count = reminders.filter((reminder) => reminder.kind === kind).length;
             return (
-              <div key={kind} className="flex items-center gap-3 rounded-xl border border-border bg-secondary/30 p-3">
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${meta.className}`}>
+              <div
+                key={kind}
+                className="flex items-center gap-3 rounded-xl border border-border bg-secondary/30 p-3"
+              >
+                <span
+                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${meta.className}`}
+                >
                   <Icon className="h-4 w-4" />
                 </span>
                 <div>
@@ -210,10 +241,13 @@ function NotificationsPage() {
         </div>
 
         {reminders.length === 0 ? (
-          <EmptyState title="No reminders are due" hint="The queue updates automatically as your records change." />
+          <EmptyState
+            title="No reminders are due"
+            hint="The queue updates automatically as your records change."
+          />
         ) : (
           <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
-            {reminders.map((reminder) => {
+            {reminderPageView.items.map((reminder) => {
               const meta = REMINDER_META[reminder.kind];
               const Icon = meta.icon;
               return (
@@ -222,7 +256,9 @@ function NotificationsPage() {
                   className="grid gap-3 rounded-xl border border-border bg-secondary/20 p-3 transition-colors hover:border-gold/30 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-4"
                 >
                   <div className="flex min-w-0 items-start gap-3">
-                    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${meta.className}`}>
+                    <span
+                      className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${meta.className}`}
+                    >
                       <Icon className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
@@ -269,6 +305,14 @@ function NotificationsPage() {
             })}
           </div>
         )}
+        {reminders.length > PAGE_SIZE && (
+          <TablePager
+            page={reminderPageView.page}
+            pageSize={PAGE_SIZE}
+            total={reminders.length}
+            onPage={setReminderPage}
+          />
+        )}
         <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
           Messages are prepared automatically. Sending opens WhatsApp, SMS or your email app for
           final confirmation. Fully unattended delivery requires a connected messaging provider.
@@ -283,7 +327,7 @@ function NotificationsPage() {
           />
         ) : (
           <ul className="divide-y divide-border/60">
-            {items.map((n) => {
+            {notificationPageView.items.map((n) => {
               const isRead = read.has(n.id);
               const row = (
                 <div className="flex items-start gap-4 py-4">
@@ -324,6 +368,14 @@ function NotificationsPage() {
               );
             })}
           </ul>
+        )}
+        {items.length > PAGE_SIZE && (
+          <TablePager
+            page={notificationPageView.page}
+            pageSize={PAGE_SIZE}
+            total={items.length}
+            onPage={setNotificationPage}
+          />
         )}
       </Panel>
     </>

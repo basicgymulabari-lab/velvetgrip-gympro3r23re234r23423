@@ -10,7 +10,7 @@ import {
   upsertEntitlement,
   verifyRazorpayWebhook,
 } from "../_shared/billing.ts";
-import { errorResponse, jsonResponse, optionsResponse } from "../_shared/http.ts";
+import { errorResponse, jsonResponse, optionsResponse, readLimitedBodyText } from "../_shared/http.ts";
 
 type Entity = Record<string, unknown> & {
   id?: string;
@@ -29,8 +29,9 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
 
   let eventKey = "";
+  let claimToken: string | null = null;
   try {
-    const rawBody = await request.text();
+    const rawBody = await readLimitedBodyText(request);
     if (!(await verifyRazorpayWebhook(rawBody, request.headers.get("x-razorpay-signature")))) {
       return jsonResponse(request, { error: "Invalid Razorpay signature" }, 400);
     }
@@ -43,8 +44,20 @@ Deno.serve(async (request) => {
       };
     };
     eventKey = await sha256Hex(rawBody);
-    const fresh = await claimWebhook("razorpay", eventKey, event.event, rawBody);
-    if (!fresh) return jsonResponse(request, { received: true, duplicate: true });
+    const claim = await claimWebhook("razorpay", eventKey, event.event, rawBody);
+    if (claim.status === "processed") return jsonResponse(request, { received: true, duplicate: true });
+    if (claim.status === "in_progress") {
+      return jsonResponse(
+        request,
+        { error: "This webhook event is still processing. Please retry shortly.", code: "WEBHOOK_IN_PROGRESS" },
+        503,
+      );
+    }
+    if (claim.status === "payload_conflict") {
+      return jsonResponse(request, { error: "Webhook event payload did not match its original delivery.", code: "WEBHOOK_PAYLOAD_CONFLICT" }, 409);
+    }
+    claimToken = claim.claimToken;
+    if (!claimToken) throw new Error("Webhook claim token is missing.");
 
     const subscription = event.payload?.subscription?.entity;
     if (event.event?.startsWith("subscription.") && subscription?.id) {
@@ -139,10 +152,12 @@ Deno.serve(async (request) => {
       }
     }
 
-    await finishWebhook("razorpay", eventKey, "processed");
+    await finishWebhook("razorpay", eventKey, claimToken, "processed");
     return jsonResponse(request, { received: true });
   } catch (error) {
-    if (eventKey) await finishWebhook("razorpay", eventKey, "failed", "PROCESSING_ERROR").catch(() => undefined);
+    if (eventKey && claimToken) {
+      await finishWebhook("razorpay", eventKey, claimToken, "failed", "PROCESSING_ERROR").catch(() => undefined);
+    }
     return errorResponse(request, error);
   }
 });

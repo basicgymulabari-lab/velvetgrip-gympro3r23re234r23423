@@ -1,4 +1,5 @@
 const MINOR_SCALE = 100;
+const MAX_SAFE_MINOR = BigInt(Number.MAX_SAFE_INTEGER);
 
 /**
  * Convert a major-unit currency number to integer minor units (paise/cents).
@@ -12,25 +13,50 @@ export function toMinor(value: number) {
   return minor;
 }
 
+/** True when a currency value can be represented exactly within our minor-unit model. */
+export function isSafeMoneyAmount(value: number) {
+  return Number.isFinite(value) && Number.isSafeInteger(Math.round(value * MINOR_SCALE));
+}
+
+export function isPositiveMoneyAmount(value: number) {
+  return isSafeMoneyAmount(value) && Math.round(value * MINOR_SCALE) > 0;
+}
+
 export const fromMinor = (minor: number) => minor / MINOR_SCALE;
+
+function fromCheckedMinor(minor: bigint) {
+  if (minor > MAX_SAFE_MINOR || minor < -MAX_SAFE_MINOR) {
+    throw new Error("Monetary value is too large");
+  }
+  return fromMinor(Number(minor));
+}
 
 export const normalizeMoney = (value: number) => fromMinor(toMinor(value));
 
 export function sumMoney<T>(items: readonly T[], pick: (item: T) => number) {
-  return fromMinor(items.reduce((sum, item) => sum + toMinor(pick(item)), 0));
+  const total = items.reduce((sum, item) => sum + BigInt(toMinor(pick(item))), 0n);
+  return fromCheckedMinor(total);
 }
 
 export function addMoney(...values: number[]) {
-  return fromMinor(values.reduce((sum, value) => sum + toMinor(value), 0));
+  const total = values.reduce((sum, value) => sum + BigInt(toMinor(value)), 0n);
+  return fromCheckedMinor(total);
+}
+
+export function isSafeMoneySum(...values: number[]) {
+  try {
+    addMoney(...values);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function subtractMoney(left: number, right: number) {
-  return fromMinor(toMinor(left) - toMinor(right));
+  return fromCheckedMinor(BigInt(toMinor(left)) - BigInt(toMinor(right)));
 }
 
 export function multiplyMoney(unitAmount: number, quantity: number) {
   if (!Number.isSafeInteger(quantity)) throw new Error("Invalid quantity");
-  const result = toMinor(unitAmount) * quantity;
-  if (!Number.isSafeInteger(result)) throw new Error("Monetary value is too large");
-  return fromMinor(result);
+  return fromCheckedMinor(BigInt(toMinor(unitAmount)) * BigInt(quantity));
 }
