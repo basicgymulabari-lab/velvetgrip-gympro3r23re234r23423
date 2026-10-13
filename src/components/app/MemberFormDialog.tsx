@@ -29,11 +29,7 @@ import { isLifetimePlan, membershipEndDate } from "@/lib/gym/membership";
 import { isSafeMoneyAmount, isSafeMoneySum } from "@/lib/gym/money";
 import { openSubscriptionPaywall } from "@/lib/billing/client";
 import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
-import {
-  dataUrlToBlob,
-  deletePrivateAsset,
-  uploadPrivateAsset,
-} from "@/lib/gym/storage";
+import { dataUrlToBlob, deletePrivateAsset, uploadPrivateAsset } from "@/lib/gym/storage";
 
 type FormState = {
   name: string;
@@ -76,6 +72,49 @@ const toDateInput = (date: Date) =>
     date.getDate(),
   ).padStart(2, "0")}`;
 
+type CameraPolicyDocument = Document & {
+  permissionsPolicy?: { allowsFeature: (feature: string) => boolean };
+  featurePolicy?: { allowsFeature: (feature: string) => boolean };
+};
+
+function cameraPolicyAllowsCamera(): boolean | null {
+  const policyDocument = document as CameraPolicyDocument;
+  const policy = policyDocument.permissionsPolicy ?? policyDocument.featurePolicy;
+  if (!policy) return null;
+  try {
+    return policy.allowsFeature("camera");
+  } catch {
+    return null;
+  }
+}
+
+function cameraFailureMessage(error: unknown, stage: "access" | "preview"): string {
+  if (!window.isSecureContext) {
+    return "Camera access requires a secure HTTPS connection. Open the secure website and try again.";
+  }
+  if (cameraPolicyAllowsCamera() === false) {
+    return "This version of the app blocks camera access in its security policy. Update the website, then reload and try again.";
+  }
+
+  const name = error instanceof DOMException ? error.name : "";
+  if (stage === "access") {
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      return "Camera access was denied. Allow camera access for this site in your browser settings, then retry.";
+    }
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      return "No camera was found. Connect or enable a camera, or use Upload photo instead.";
+    }
+    if (name === "NotReadableError" || name === "AbortError") {
+      return "The camera is unavailable or in use by another app. Close other camera apps and retry.";
+    }
+    if (name === "OverconstrainedError") {
+      return "The available camera does not support the requested settings. Try another camera or Upload photo.";
+    }
+  }
+
+  return "The camera opened, but its preview could not start. Check browser and device camera access, then retry.";
+}
+
 export function MemberFormDialog({
   open,
   onOpenChange,
@@ -92,11 +131,14 @@ export function MemberFormDialog({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraAttempt, setCameraAttempt] = useState(0);
   const [cropSource, setCropSource] = useState<string | null>(null);
   const [cropZoom, setCropZoom] = useState(1);
   const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 });
   const [cropImageSize, setCropImageSize] = useState({ width: 1, height: 1 });
   const fileRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cropViewportRef = useRef<HTMLDivElement>(null);
@@ -105,6 +147,7 @@ export function MemberFormDialog({
   const stepTransitionRef = useRef(false);
   const stepReadyTimerRef = useRef<number | null>(null);
   const submittingRef = useRef(false);
+  const profileOnlySubmitRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
@@ -151,11 +194,37 @@ export function MemberFormDialog({
   useEffect(() => {
     if (!cameraOpen) return;
     let cancelled = false;
+    let videoElement: HTMLVideoElement | null = null;
+    let activeStream: MediaStream | null = null;
+    let previewTimer: number | null = null;
+    let onPlaying: (() => void) | null = null;
+
+    const stopStream = () => {
+      activeStream?.getTracks().forEach((track) => track.stop());
+      if (streamRef.current === activeStream) streamRef.current = null;
+      if (videoElement && videoElement.srcObject === activeStream) {
+        videoElement.pause();
+        videoElement.srcObject = null;
+      }
+      activeStream = null;
+    };
 
     const startCamera = async () => {
       setCameraError("");
+      setCameraStarting(true);
+      if (!window.isSecureContext) {
+        setCameraError(cameraFailureMessage(new Error("insecure context"), "access"));
+        setCameraStarting(false);
+        return;
+      }
+      if (cameraPolicyAllowsCamera() === false) {
+        setCameraError(cameraFailureMessage(new Error("camera blocked by policy"), "access"));
+        setCameraStarting(false);
+        return;
+      }
       if (!navigator.mediaDevices?.getUserMedia) {
         setCameraError("Camera access is unavailable in this browser. Try Upload photo instead.");
+        setCameraStarting(false);
         return;
       }
       try {
@@ -163,29 +232,84 @@ export function MemberFormDialog({
           video: { facingMode: "user" },
           audio: false,
         });
+        activeStream = stream;
         if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopStream();
           return;
         }
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+        videoElement = videoRef.current;
+        const video = videoElement;
+        if (!video) {
+          stopStream();
+          setCameraError(
+            "Camera access was granted, but the preview could not be attached. Retry the camera.",
+          );
+          setCameraStarting(false);
+          return;
         }
-      } catch {
-        setCameraError(
-          "Camera permission was denied or the camera is unavailable. Allow access and try again.",
-        );
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        video.srcObject = stream;
+        onPlaying = () => {
+          if (previewTimer !== null) window.clearTimeout(previewTimer);
+          previewTimer = null;
+          if (!cancelled) setCameraStarting(false);
+        };
+        video.addEventListener("playing", onPlaying, { once: true });
+        stream.getVideoTracks().forEach((track) => {
+          track.addEventListener(
+            "ended",
+            () => {
+              if (!cancelled) {
+                setCameraError(
+                  "The camera stopped. Check its connection or privacy shutter, then retry.",
+                );
+                setCameraStarting(false);
+              }
+            },
+            { once: true },
+          );
+        });
+        previewTimer = window.setTimeout(() => {
+          if (cancelled || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+          stopStream();
+          setCameraError(
+            "The camera opened, but no preview arrived. Check the camera privacy shutter and device access, then retry.",
+          );
+          setCameraStarting(false);
+        }, 12_000);
+        try {
+          await video.play();
+          if (!cancelled && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            if (previewTimer !== null) window.clearTimeout(previewTimer);
+            previewTimer = null;
+            setCameraStarting(false);
+          }
+        } catch (error) {
+          stopStream();
+          if (!cancelled) {
+            setCameraError(cameraFailureMessage(error, "preview"));
+            setCameraStarting(false);
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCameraError(cameraFailureMessage(error, "access"));
+          setCameraStarting(false);
+        }
       }
     };
 
     void startCamera();
     return () => {
       cancelled = true;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      if (previewTimer !== null) window.clearTimeout(previewTimer);
+      if (onPlaying && videoElement) videoElement.removeEventListener("playing", onPlaying);
+      stopStream();
     };
-  }, [cameraOpen]);
+  }, [cameraOpen, cameraAttempt]);
 
   useEffect(() => {
     if (!open) {
@@ -264,8 +388,8 @@ export function MemberFormDialog({
       e.email = "Enter a valid email address.";
     if (localPhoneDigits(form.phone).length !== 10)
       e.phone = "Enter exactly 10 digits after the country code.";
-    if (!editingWalkIn && !form.dob) e.dob = "Date of birth is required.";
-    else if (form.dob > toDateInput(new Date())) e.dob = "Date of birth cannot be in the future.";
+    if (form.dob && form.dob > toDateInput(new Date()))
+      e.dob = "Date of birth cannot be in the future.";
     if (form.address.trim().length > 200) e.address = "Address is too long.";
     return e;
   };
@@ -291,13 +415,14 @@ export function MemberFormDialog({
     }, 600);
   };
 
-  const validate = () => {
+  const validate = (includeMembership = true) => {
     const e = personalErrors();
-    if (!member && !form.planId) e.planId = "Select a membership plan.";
-    if (!member && !form.startDate) e.startDate = "Select a membership start date.";
-    if (liveJoiningFeeError) e.joiningFee = liveJoiningFeeError;
-    if (liveDiscountError) e.discount = liveDiscountError;
-    if (livePaidError) e.paidNow = livePaidError;
+    if (!member && includeMembership && !form.planId) e.planId = "Select a membership plan.";
+    if (!member && includeMembership && !form.startDate)
+      e.startDate = "Select a membership start date.";
+    if (includeMembership && liveJoiningFeeError) e.joiningFee = liveJoiningFeeError;
+    if (includeMembership && liveDiscountError) e.discount = liveDiscountError;
+    if (includeMembership && livePaidError) e.paidNow = livePaidError;
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -435,13 +560,15 @@ export function MemberFormDialog({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const profileOnly = profileOnlySubmitRef.current;
+    profileOnlySubmitRef.current = false;
     if (submittingRef.current) return;
-    if (!member && step === 1) {
+    if (!member && step === 1 && !profileOnly) {
       advanceToMembership();
       return;
     }
-    if (!member && !membershipStepReady) return;
-    if (!validate()) return;
+    if (!member && !profileOnly && !membershipStepReady) return;
+    if (!validate(!profileOnly)) return;
     submittingRef.current = true;
     let uploadedPhotoPath: string | null = null;
     try {
@@ -476,11 +603,13 @@ export function MemberFormDialog({
       } else {
         const added = addMember({
           ...payload,
-          planId: form.planId || undefined,
-          startDate: form.startDate ? `${form.startDate}T00:00:00` : undefined,
-          joiningFee,
-          discount: form.planId ? discountAmount : 0,
-          paidNow: Math.min(Number(form.paidNow || 0), form.planId ? finalPrice : 0),
+          planId: profileOnly ? undefined : form.planId || undefined,
+          startDate: !profileOnly && form.startDate ? `${form.startDate}T00:00:00` : undefined,
+          joiningFee: profileOnly ? undefined : joiningFee,
+          discount: !profileOnly && form.planId ? discountAmount : 0,
+          paidNow: profileOnly
+            ? 0
+            : Math.min(Number(form.paidNow || 0), form.planId ? finalPrice : 0),
           paymentMethod: form.paymentMethod,
         });
         if (!added) {
@@ -489,7 +618,11 @@ export function MemberFormDialog({
           toast.info("The free plan supports up to 10 members. Activate Pro to add more.");
           return;
         }
-        toast.success(`${payload.name} added to the roster`);
+        toast.success(
+          profileOnly
+            ? `${payload.name} added. Assign a membership plan whenever you're ready.`
+            : `${payload.name} added to the roster`,
+        );
       }
       onOpenChange(false);
     } catch (error) {
@@ -498,6 +631,12 @@ export function MemberFormDialog({
     } finally {
       submittingRef.current = false;
     }
+  };
+
+  const saveProfileOnly = () => {
+    if (!formRef.current) return;
+    profileOnlySubmitRef.current = true;
+    formRef.current.requestSubmit();
   };
 
   return (
@@ -519,12 +658,12 @@ export function MemberFormDialog({
               : member
                 ? "Update contact details and personal information."
                 : step === 1
-                  ? "Enter the member's personal and contact details."
+                  ? "Enter the member's details. You can assign a membership plan now or later."
                   : "Choose the membership plan and confirm the joining payment."}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submit} className="space-y-5">
+        <form ref={formRef} onSubmit={submit} className="space-y-5">
           {!member && (
             <div className="grid grid-cols-2 gap-2 text-xs font-medium">
               <button
@@ -655,7 +794,7 @@ export function MemberFormDialog({
                   />
                 </Field>
                 {!editingWalkIn && (
-                  <Field label="Date of birth" error={errors.dob}>
+                  <Field label="Date of birth (optional)" error={errors.dob}>
                     <AppDatePicker
                       value={form.dob}
                       onChange={(value) => set("dob", value)}
@@ -749,10 +888,12 @@ export function MemberFormDialog({
                 <AppDatePicker
                   value={form.startDate}
                   onChange={(value) => set("startDate", value)}
-                  min={new Date(new Date().setHours(0, 0, 0, 0))}
                   max={new Date(new Date().getFullYear() + 5, 11, 31)}
                   placeholder="Select start date"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Past dates are allowed so you can record the member's actual start date.
+                </p>
                 {selectedPlan && calculatedEndDate && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {isLifetimePlan(selectedPlan)
@@ -760,6 +901,15 @@ export function MemberFormDialog({
                       : `Ends automatically on ${shortDate(calculatedEndDate)}`}
                   </p>
                 )}
+                {selectedPlan &&
+                  calculatedEndDate &&
+                  !isLifetimePlan(selectedPlan) &&
+                  toDateInput(calculatedEndDate) < toDateInput(new Date()) && (
+                    <p className="mt-1 text-xs text-warning" role="status">
+                      This start date makes the membership already expired. Confirm the date is
+                      correct before adding the member.
+                    </p>
+                  )}
               </Field>
               <Field label="Discount type">
                 <Select
@@ -861,7 +1011,7 @@ export function MemberFormDialog({
             </div>
           )}
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
@@ -878,9 +1028,14 @@ export function MemberFormDialog({
               </Button>
             )}
             {!member && step === 1 ? (
-              <Button type="button" onClick={advanceToMembership}>
-                Next
-              </Button>
+              <>
+                <Button type="button" variant="secondary" onClick={saveProfileOnly}>
+                  Save profile only
+                </Button>
+                <Button type="button" onClick={advanceToMembership}>
+                  Choose membership
+                </Button>
+              </>
             ) : (
               <Button type="submit" disabled={!member && (!membershipStepReady || !form.planId)}>
                 {member ? "Save changes" : "Add member"}
@@ -900,25 +1055,42 @@ export function MemberFormDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="aspect-[4/3] overflow-hidden rounded-2xl border border-border bg-black">
+              <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-border bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="h-full w-full scale-x-[-1] object-cover"
+                />
                 {cameraError ? (
-                  <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
+                  <div className="absolute inset-0 grid place-items-center bg-black/90 p-6 text-center text-sm text-muted-foreground">
                     {cameraError}
                   </div>
-                ) : (
-                  <video
-                    ref={videoRef}
-                    muted
-                    playsInline
-                    className="h-full w-full scale-x-[-1] object-cover"
-                  />
-                )}
+                ) : cameraStarting ? (
+                  <div className="absolute inset-0 grid place-items-center bg-black/60 p-6 text-center text-sm text-muted-foreground">
+                    Starting camera preview…
+                  </div>
+                ) : null}
               </div>
               <div className="flex justify-end gap-2">
+                {cameraError && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setCameraAttempt((value) => value + 1)}
+                  >
+                    <RotateCw className="mr-2 h-4 w-4" /> Retry camera
+                  </Button>
+                )}
                 <Button type="button" variant="secondary" onClick={() => setCameraOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="button" disabled={Boolean(cameraError)} onClick={capturePhoto}>
+                <Button
+                  type="button"
+                  disabled={Boolean(cameraError) || cameraStarting}
+                  onClick={capturePhoto}
+                >
                   <Camera className="mr-2 h-4 w-4" /> Capture photo
                 </Button>
               </div>

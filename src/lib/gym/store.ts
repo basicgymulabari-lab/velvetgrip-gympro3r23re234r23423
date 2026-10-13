@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { buildSeed, uid, iso } from "./seed";
-import { configureCalendarSystem } from "./calendar";
+import { configureCalendarSystem, localDateInput, parseCalendarDate } from "./calendar";
 import { phoneForCountry } from "./phone";
 import { membershipEndDate } from "./membership";
 import {
@@ -61,6 +61,7 @@ import {
   regularMemberCount,
   setGymSubscriptionSnapshot,
 } from "../billing/client";
+import { isCurrentMemberStatus, isWalkIn, statusOf } from "./selectors";
 
 let state: GymState | null = null;
 const listeners = new Set<() => void>();
@@ -1507,6 +1508,57 @@ export function updateMember(id: string, patch: Partial<Member>) {
   return true;
 }
 
+/** Record one front-desk visit per member per local calendar day. */
+export function checkInMember(id: string) {
+  const at = new Date();
+  const current = getState();
+  const member = current.members.find((item) => item.id === id && !item.deletedAt);
+  if (
+    !member ||
+    isWalkIn(member) ||
+    !isCurrentMemberStatus(statusOf(current, id))
+  ) {
+    return false;
+  }
+
+  const checkInDay = localDateInput(at);
+  if (member.lastCheckInAt) {
+    const lastCheckIn = parseCalendarDate(member.lastCheckInAt);
+    if (Number.isFinite(lastCheckIn.getTime()) && localDateInput(lastCheckIn) === checkInDay)
+      return false;
+  }
+
+  const timestamp = at.toISOString();
+  return setState((st) => {
+    const latestMember = st.members.find((item) => item.id === id && !item.deletedAt);
+    if (
+      !latestMember ||
+      isWalkIn(latestMember) ||
+      !isCurrentMemberStatus(statusOf(st, id))
+    ) {
+      return st;
+    }
+    if (latestMember.lastCheckInAt) {
+      const lastCheckIn = parseCalendarDate(latestMember.lastCheckInAt);
+      if (Number.isFinite(lastCheckIn.getTime()) && localDateInput(lastCheckIn) === checkInDay)
+        return st;
+    }
+
+    const next = {
+      ...st,
+      members: st.members.map((item) =>
+        item.id === id ? { ...item, lastCheckInAt: timestamp } : item,
+      ),
+    };
+    return log(
+      next,
+      "member_checked_in",
+      "Member checked in",
+      `${latestMember.name} visited the gym`,
+    );
+  });
+}
+
 export function trashMember(id: string, by: string) {
   if (!getState().members.some((member) => member.id === id && !member.deletedAt)) return false;
   const saved = setState((st) => {
@@ -1760,18 +1812,25 @@ export function renewMembership(
   paidNow: number,
   discount = 0,
   paymentMethod: Payment["method"] = "cash",
+  startDate?: string,
 ) {
   const before = getState();
   const selectedPlan = before.plans.find((item) => item.id === planId && !item.deletedAt);
   const selectedMember = before.members.find(
     (item) => item.id === memberId && !item.deletedAt && item.type !== "walk_in",
   );
+  const requestedStart = startDate ? parseCalendarDate(startDate) : undefined;
   if (
     !selectedPlan ||
     !selectedMember ||
     !isPositiveMoneyAmount(selectedPlan.price) ||
     !isSafeMoneyAmount(paidNow) ||
-    !isSafeMoneyAmount(discount)
+    !isSafeMoneyAmount(discount) ||
+    (startDate !== undefined &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+        !requestedStart ||
+        !Number.isFinite(requestedStart.getTime()))) ||
+    (startDate !== undefined && before.memberships.some((item) => item.memberId === memberId))
   ) {
     return false;
   }
@@ -1781,11 +1840,13 @@ export function renewMembership(
     const plan = st.plans.find((p) => p.id === planId);
     const member = st.members.find((m) => m.id === memberId);
     if (!plan || !member) return st;
-    const current = st.memberships
-      .filter((m) => m.memberId === memberId)
-      .sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
+    const history = st.memberships.filter((m) => m.memberId === memberId);
+    if (startDate !== undefined && history.length > 0) return st;
+    const isFirstAssignment = history.length === 0;
+    const current = history.sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
     const base =
-      current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date();
+      requestedStart ??
+      (current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date());
     const end = membershipEndDate(base, plan);
     const membership: Membership = {
       id: uid("mship"),
@@ -1809,8 +1870,8 @@ export function renewMembership(
     next = log(
       next,
       "membership_renewed",
-      "Membership renewed",
-      `${member.name} renewed ${plan.name} · ${plan.durationDays} days`,
+      isFirstAssignment ? "Membership assigned" : "Membership renewed",
+      `${member.name} ${isFirstAssignment ? "started" : "renewed"} ${plan.name} · ${plan.durationDays} days`,
     );
     if (collected > 0) {
       const [withSeq, invoiceNo] = nextInvoice(next);
@@ -1826,7 +1887,7 @@ export function renewMembership(
             amount: collected,
             method: paymentMethod,
             date: iso(new Date()),
-            note: `${plan.name} — renewal payment`,
+            note: `${plan.name} — ${isFirstAssignment ? "joining" : "renewal"} payment`,
           },
           ...withSeq.payments,
         ],

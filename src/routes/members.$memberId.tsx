@@ -6,6 +6,7 @@ import {
   Phone,
   MapPin,
   Cake,
+  CalendarCheck2,
   ShieldAlert,
   Plus,
   RefreshCw,
@@ -30,6 +31,7 @@ import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
 import { MemberFormDialog } from "@/components/app/MemberFormDialog";
 import { PrivateAssetImage } from "@/components/app/PrivateAssetImage";
+import { AppDatePicker } from "@/components/app/AppDatePicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,11 +46,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { InvoiceDialog, type InvoiceData } from "@/components/app/InvoiceDialog";
+import { localDateInput } from "@/lib/gym/calendar";
+import { isLifetimePlan, membershipEndDate } from "@/lib/gym/membership";
 import {
   addMeasurement,
   addNote,
   addPayment,
   addSalePayment,
+  checkInMember,
   deleteMeasurement,
   deleteNote,
   renewMembership,
@@ -64,6 +69,9 @@ import {
   membershipHistory,
   membershipPayable,
   money,
+  dateTime,
+  hasCheckedInToday,
+  isCurrentMemberStatus,
   outstandingFor,
   paidFor,
   planOf,
@@ -159,6 +167,7 @@ function MemberProfile() {
   const cur = state.settings.currency;
   const walkIn = isWalkIn(member);
   const status = walkIn ? "walk-in" : statusOf(state, member.id);
+  const checkedInToday = hasCheckedInToday(member);
   const ms = currentMembership(state, member.id);
   const due = walkIn ? outstandingFor(state, member.id) : dueFor(state, member.id);
   const payments = state.payments.filter((p) => p.memberId === member.id);
@@ -193,6 +202,22 @@ function MemberProfile() {
                 }}
               >
                 <Snowflake className="mr-2 h-4 w-4" /> {ms.frozen ? "Unfreeze" : "Freeze"}
+              </Button>
+            )}
+            {!walkIn && status !== "walk-in" && isCurrentMemberStatus(status) && (
+              <Button
+                variant="secondary"
+                disabled={checkedInToday}
+                onClick={() => {
+                  if (checkInMember(member.id)) toast.success(`${member.name} checked in.`);
+                  else
+                    toast.error(
+                      "Check-in could not be recorded. Confirm the membership is still eligible.",
+                    );
+                }}
+              >
+                <CalendarCheck2 className="mr-2 h-4 w-4" />
+                {checkedInToday ? "Checked in today" : "Check in"}
               </Button>
             )}
             {!walkIn && (
@@ -230,6 +255,16 @@ function MemberProfile() {
               <Info icon={Phone} value={member.phone} />
               <Info icon={Mail} value={member.email || "—"} />
               {!walkIn && <Info icon={Cake} value={shortDate(member.dob.slice(0, 10))} />}
+              {!walkIn && (
+                <Info
+                  icon={CalendarCheck2}
+                  value={
+                    member.lastCheckInAt
+                      ? `Last visit ${dateTime(member.lastCheckInAt)}`
+                      : "No visit recorded yet"
+                  }
+                />
+              )}
               <Info icon={MapPin} value={member.address || "—"} />
               {!walkIn && (
                 <Info icon={ShieldAlert} value={`Emergency: ${member.emergencyContact || "—"}`} />
@@ -981,9 +1016,26 @@ export function RenewDialog({
   const [discountValue, setDiscountValue] = useState("");
   const [paid, setPaid] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [startDate, setStartDate] = useState(() => localDateInput(new Date()));
+  useEffect(() => {
+    if (!open) return;
+    setPlanId("");
+    setDiscountType("none");
+    setDiscountValue("");
+    setPaid("");
+    setPaymentMethod("cash");
+    setStartDate(localDateInput(new Date()));
+  }, [open, memberId]);
   if (!state) return null;
+  const hasMembershipHistory = membershipHistory(state, memberId).length > 0;
   const plan = state.plans.find((p) => p.id === planId);
   const cur = state.settings.currency;
+  const projectedEndDate =
+    !hasMembershipHistory && plan && startDate
+      ? membershipEndDate(new Date(`${startDate}T00:00:00`), plan)
+      : null;
+  const projectedEndDateIsExpired =
+    projectedEndDate && localDateInput(projectedEndDate) < localDateInput(new Date());
   const originalPrice = plan?.price ?? 0;
   const rawDiscount =
     discountType === "none"
@@ -1012,6 +1064,7 @@ export function RenewDialog({
     setDiscountType("none");
     setDiscountValue("");
     setPaymentMethod("cash");
+    setStartDate(localDateInput(new Date()));
   };
 
   return (
@@ -1019,7 +1072,7 @@ export function RenewDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-2xl tracking-wide">
-            Renew Membership
+            {hasMembershipHistory ? "Renew Membership" : "Assign Membership"}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -1040,6 +1093,32 @@ export function RenewDialog({
               </SelectContent>
             </Select>
           </div>
+          {!hasMembershipHistory && (
+            <div className="space-y-2">
+              <Label>Membership start date</Label>
+              <AppDatePicker
+                value={startDate}
+                onChange={setStartDate}
+                max={new Date(new Date().getFullYear() + 5, 11, 31)}
+                placeholder="Select start date"
+              />
+              <p className="text-xs text-muted-foreground">
+                Choose the member’s actual start date. Past dates are allowed for accurate records.
+              </p>
+              {plan && projectedEndDate && (
+                <p className="text-xs text-muted-foreground">
+                  {isLifetimePlan(plan)
+                    ? "This membership does not expire"
+                    : `Membership ends automatically on ${shortDate(projectedEndDate)}`}
+                </p>
+              )}
+              {plan && !isLifetimePlan(plan) && projectedEndDateIsExpired && (
+                <p className="text-xs text-warning" role="status">
+                  This start date makes the membership already expired. Confirm the date is correct.
+                </p>
+              )}
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Discount type</Label>
             <Select
@@ -1128,11 +1207,20 @@ export function RenewDialog({
                   toast.error("Enter a valid amount");
                   return;
                 }
-                if (!renewMembership(memberId, planId, amount, discountAmount, paymentMethod)) {
+                if (
+                  !renewMembership(
+                    memberId,
+                    planId,
+                    amount,
+                    discountAmount,
+                    paymentMethod,
+                    hasMembershipHistory ? undefined : startDate,
+                  )
+                ) {
                   toast.error("Renewal was not saved. Check the account, member and plan details.");
                   return;
                 }
-                toast.success("Membership renewed");
+                toast.success(hasMembershipHistory ? "Membership renewed" : "Membership assigned");
                 onOpenChange(false);
                 reset();
                 onDone?.();

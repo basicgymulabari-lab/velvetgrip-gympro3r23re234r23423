@@ -20,6 +20,7 @@ import {
   Wallet,
   AlertTriangle,
   CalendarX,
+  CalendarCheck2,
   UserPlus,
   RefreshCw,
   BadgeX,
@@ -95,6 +96,7 @@ export const Route = createFileRoute("/")({
 
 const ACTIVITY_ICON: Record<ActivityType, typeof UserPlus> = {
   member_added: UserPlus,
+  member_checked_in: CalendarCheck2,
   membership_renewed: RefreshCw,
   membership_expired: BadgeX,
   payment_received: IndianRupee,
