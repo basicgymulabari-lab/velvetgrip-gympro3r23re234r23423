@@ -9,7 +9,6 @@ type WorkerEnv = {
 };
 
 type RewriterElement = {
-  setAttribute(name: string, value: string): void;
   prepend(content: string, options?: { html?: boolean }): void;
 };
 
@@ -30,6 +29,15 @@ function createNonce() {
 
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+    const requestUrl = new URL(request.url);
+
+    // Retire the former public CEO demo before the SPA shell boots. A client
+    // router redirect on this URL can collide with hydration when the CEO
+    // console is already open in the same browser session.
+    if (request.method === "GET" && requestUrl.pathname === "/ceo/demo") {
+      return Response.redirect(new URL("/ceo", requestUrl), 308);
+    }
+
     const acceptsHtml = request.headers.get("accept")?.toLowerCase().includes("text/html");
     const isDocumentRequest = request.method === "GET" && acceptsHtml;
 
@@ -49,44 +57,32 @@ export default {
       return assetResponse;
     }
 
-    const headers = new Headers(assetResponse.headers);
+    const responseHeaders = new Headers(assetResponse.headers);
     const nonce = createNonce();
-    const existingPolicy = headers.get("Content-Security-Policy");
+    const existingPolicy = responseHeaders.get("Content-Security-Policy");
     const securedPolicy = existingPolicy ? addCspNonces(existingPolicy, nonce) : null;
     if (!securedPolicy) {
-      headers.set("Cache-Control", "no-store");
-      headers.set("X-Content-Type-Options", "nosniff");
+      responseHeaders.set("Cache-Control", "private, no-store");
+      responseHeaders.set("X-Content-Type-Options", "nosniff");
       return new Response("Application security policy is misconfigured.", {
         status: 500,
-        headers,
+        headers: responseHeaders,
       });
     }
 
+    // Nonce only the tiny style bootstrap. Do not rewrite TanStack's script
+    // tags: its script manifest intentionally controls the async attribute.
     const rewritten = new HTMLRewriter()
       .on("head", {
         element(element) {
-          // Sonner injects its stylesheet dynamically. Give those trusted
-          // runtime style elements the same per-response nonce without
-          // allowing arbitrary inline style blocks through the CSP.
           element.prepend(
             `<script nonce="${nonce}">(()=>{const n=document.currentScript?.nonce;if(!n)return;const s=e=>{if(e&&e.nodeType===1&&e.nodeName==="STYLE"&&!e.nonce)e.setAttribute("nonce",n)};const c=document.createElement.bind(document);document.createElement=function(t,o){const e=c(t,o);s(e);return e};const a=Node.prototype.appendChild;Node.prototype.appendChild=function(e){s(e);return a.call(this,e)};const i=Node.prototype.insertBefore;Node.prototype.insertBefore=function(e,r){s(e);return i.call(this,e,r)}})();</script>`,
             { html: true },
           );
         },
       })
-      .on("script", {
-        element(element) {
-          element.setAttribute("nonce", nonce);
-        },
-      })
-      .on("style", {
-        element(element) {
-          element.setAttribute("nonce", nonce);
-        },
-      })
       .transform(assetResponse);
 
-    const responseHeaders = new Headers(rewritten.headers);
     responseHeaders.set("Content-Security-Policy", securedPolicy);
     responseHeaders.set("Cache-Control", "private, no-store");
     responseHeaders.delete("ETag");

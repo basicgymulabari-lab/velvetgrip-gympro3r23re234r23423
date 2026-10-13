@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LayoutDashboard,
   Users,
+  UserCheck,
   BadgeCheck,
   Wallet,
   Package,
@@ -61,6 +62,7 @@ import {
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/members", label: "Members", icon: Users },
+  { to: "/attendance", label: "Attendance", icon: UserCheck },
   { to: "/memberships", label: "Memberships", icon: BadgeCheck },
   { to: "/payments", label: "Payments", icon: Wallet },
   { to: "/products", label: "Products", icon: Package },
@@ -80,6 +82,7 @@ const OWNER_ONLY_ROUTES = ["/settings"];
 const RECEPTIONIST_ROUTE_PERMISSION = {
   "/": "dashboard",
   "/members": "members",
+  "/attendance": "members",
   "/memberships": "memberships",
   "/payments": "payments",
   "/products": "products",

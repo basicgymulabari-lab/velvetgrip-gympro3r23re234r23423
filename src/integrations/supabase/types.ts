@@ -311,6 +311,33 @@ export type Database = {
         };
         Relationships: [];
       };
+      gym_member_attendance: {
+        Row: {
+          id: string;
+          gym_id: string;
+          member_id: string;
+          attendance_date: string;
+          checked_in_at: string;
+          checked_in_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          gym_id: string;
+          member_id: string;
+          attendance_date: string;
+          checked_in_at?: string;
+          checked_in_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          gym_id?: string;
+          member_id?: string;
+          attendance_date?: string;
+          checked_in_at?: string;
+          checked_in_by?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -348,6 +375,14 @@ export type Database = {
       redeem_recharge_code: {
         Args: { p_code: string };
         Returns: Json;
+      };
+      record_current_member_attendance: {
+        Args: { p_member_id: string; p_attendance_date: string };
+        Returns: Json;
+      };
+      iv_can_manage_member_attendance: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
       };
       iv_is_platform_admin: {
         Args: Record<PropertyKey, never>;

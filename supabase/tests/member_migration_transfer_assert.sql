@@ -119,7 +119,7 @@ begin
       'membershipId', 'qa-membership-duplicate', 'kind', 'membership', 'amount', 400, 'method', 'cash',
       'date', v_start, 'note', 'QA duplicate payment'),
     jsonb_build_object('id', 'qa-payment-moved', 'invoiceNo', 'SRC-003', 'memberId', 'qa-member-payments',
-      'membershipId', 'qa-membership-payments', 'kind', 'membership', 'amount', 700, 'method', 'upi',
+      'membershipId', 'qa-membership-payments', 'kind', 'membership', 'amount', 1500, 'method', 'upi',
       'date', v_start, 'note', 'QA moved payment'),
     jsonb_build_object('id', 'qa-payment-old-moved', 'invoiceNo', 'SRC-004', 'memberId', 'qa-member-payments',
       'membershipId', 'qa-membership-payments-old', 'kind', 'membership', 'amount', 300, 'method', 'cash',
@@ -173,6 +173,8 @@ begin
   perform set_config('qa.migration.already_transferred_operation_id', v_already_transferred_operation::text, true);
   perform set_config('qa.migration.stress_operation_id', v_stress_operation::text, true);
   perform set_config('qa.migration.pre_pro_end_date', v_end, true);
+  perform set_config('qa.migration.start_date', v_start, true);
+  perform set_config('qa.migration.end_date', v_end, true);
 end;
 $$;
 
@@ -195,8 +197,11 @@ declare
   v_preview jsonb := current_setting('qa.migration.preview_membership_counts')::jsonb;
 begin
   if (v_preview ->> 'membership_count')::integer <> 2
-    or (v_preview ->> 'active_membership_count')::integer <> 1 then
-    raise exception 'Per-member migration preview should show 2 terms (1 active), got: %', v_preview;
+    or (v_preview ->> 'active_membership_count')::integer <> 1
+    or (v_preview ->> 'linked_payment_count')::integer <> 2
+    or (v_preview ->> 'linked_payment_total')::numeric <> 1800
+    or v_preview ->> 'payment_currency' <> '₹' then
+    raise exception 'Per-member migration preview should show 2 terms (1 active) and 2 linked payments totaling 1800, got: %', v_preview;
   end if;
 end;
 $$;
@@ -622,37 +627,67 @@ begin
   end if;
   select state into v_source_state from public.gym_workspaces where gym_id = v_source;
   select state into v_destination_state from public.gym_workspaces where gym_id = v_destination;
+  select member ->> 'id' into v_payment_member_id
+  from jsonb_array_elements(v_destination_state -> 'members') member
+  where member ->> 'email' = 'qa-payments@example.invalid';
+  select membership ->> 'id' into v_payment_membership_id
+  from jsonb_array_elements(v_destination_state -> 'memberships') membership
+  where membership ->> 'memberId' = v_payment_member_id
+    and membership ->> 'startDate' = current_setting('qa.migration.start_date');
   if jsonb_array_length(v_source_state -> 'memberships') <> 3
     or jsonb_array_length(v_source_state -> 'payments') <> 2
     or jsonb_array_length(v_destination_state -> 'memberships') <> 4
     or jsonb_array_length(v_destination_state -> 'payments') <> 2
-    or (v_destination_state #>> '{invoiceSeq}')::integer <> 44 then
+    or (v_destination_state #>> '{invoiceSeq}')::integer <> 44
+    or v_payment_member_id is null or v_payment_membership_id is null then
     raise exception 'explicit payment transfer did not preserve source/destination relationships and invoice sequence';
   end if;
   if (select count(*) from jsonb_array_elements(v_destination_state -> 'memberships') membership
-      where membership ->> 'memberId' = (
-        select member ->> 'id' from jsonb_array_elements(v_destination_state -> 'members') member
-        where member ->> 'email' = 'qa-payments@example.invalid')
+      where membership ->> 'memberId' = v_payment_member_id
         and membership ->> 'frozen' = 'true'
         and membership ->> 'startDate' = '2023-01-01T00:00:00.000Z'
-        and membership ->> 'price' = '900') <> 1
+        and membership ->> 'endDate' = '2023-01-14T00:00:00.000Z'
+        and membership ->> 'price' = '900' and membership ->> 'discount' = '100'
+        and membership ->> 'joiningFee' = '50'
+        and membership ->> 'frozenAt' = '2023-01-05T00:00:00.000Z') <> 1
+    or not exists (select 1 from jsonb_array_elements(v_destination_state -> 'memberships') membership
+      where membership ->> 'id' = v_payment_membership_id
+        and membership ->> 'memberId' = v_payment_member_id
+        and membership ->> 'planId' = 'qa-destination-plan'
+        and membership ->> 'startDate' = current_setting('qa.migration.start_date')
+        and membership ->> 'endDate' = current_setting('qa.migration.end_date')
+        and membership ->> 'price' = '1500' and membership ->> 'discount' = '0'
+        and membership ->> 'joiningFee' = '0' and membership ->> 'frozen' = 'false')
     or not exists (select 1 from jsonb_array_elements(v_destination_state -> 'plans') plan
       where plan ->> 'name' = 'QA Archived Plan' and plan ->> 'active' = 'false'
         and plan ->> 'price' = '900' and plan ->> 'durationDays' = '14')
     or (select count(*) from jsonb_array_elements(v_destination_state -> 'payments') payment
-      where payment ->> 'memberId' = (
-        select member ->> 'id' from jsonb_array_elements(v_destination_state -> 'members') member
-        where member ->> 'email' = 'qa-payments@example.invalid')
+      where payment ->> 'memberId' = v_payment_member_id
         and payment ->> 'kind' = 'membership'
         and exists (select 1 from jsonb_array_elements(v_destination_state -> 'memberships') membership
           where membership ->> 'id' = payment ->> 'membershipId'
-            and membership ->> 'memberId' = payment ->> 'memberId')) <> 2 then
+            and membership ->> 'memberId' = payment ->> 'memberId')) <> 2
+    or (select coalesce(sum((payment ->> 'amount')::numeric), 0)
+      from jsonb_array_elements(v_destination_state -> 'payments') payment
+      where payment ->> 'memberId' = v_payment_member_id) <> 1800
+    or not exists (select 1 from jsonb_array_elements(v_destination_state -> 'payments') payment
+      where payment ->> 'memberId' = v_payment_member_id
+        and payment ->> 'membershipId' = v_payment_membership_id
+        and payment ->> 'invoiceNo' = 'QA-000044'
+        and payment ->> 'amount' = '1500' and payment ->> 'method' = 'upi'
+        and payment ->> 'date' = current_setting('qa.migration.start_date')
+        and payment ->> 'note' like '%SRC-003%QA moved payment%')
+    or not exists (select 1 from jsonb_array_elements(v_destination_state -> 'payments') payment
+      join jsonb_array_elements(v_destination_state -> 'memberships') membership
+        on membership ->> 'id' = payment ->> 'membershipId'
+      where payment ->> 'memberId' = v_payment_member_id
+        and payment ->> 'invoiceNo' = 'QA-000043'
+        and payment ->> 'amount' = '300' and payment ->> 'method' = 'cash'
+        and payment ->> 'date' = '2023-01-05T00:00:00.000Z'
+        and payment ->> 'note' like '%SRC-004%QA historical payment%'
+        and membership ->> 'memberId' = v_payment_member_id
+        and membership ->> 'startDate' = '2023-01-01T00:00:00.000Z') then
     raise exception 'historical membership, frozen status, source plan, or linked payment history was not fully transferred';
-  end if;
-  if not exists (select 1 from jsonb_array_elements(v_destination_state -> 'payments') payment
-      where payment ->> 'invoiceNo' in ('QA-000043', 'QA-000044')
-        and payment ->> 'note' like '%SRC-%') then
-    raise exception 'moved payments did not receive destination invoice numbers and retain source invoice references';
   end if;
 end;
 $$;

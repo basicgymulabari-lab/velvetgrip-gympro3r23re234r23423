@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 
 const baseUrl = (
   process.env.E2E_BASE_URL ||
@@ -33,36 +34,61 @@ async function verifyDocument(path) {
   assert.ok(scriptDirective, `${path} must have script-src`);
   assert.doesNotMatch(scriptDirective, /'unsafe-inline'/i);
   const nonce = scriptDirective.match(/'nonce-([^']+)'/i)?.[1];
-  assert.ok(nonce, `${path} must have a per-response script nonce`);
-
+  assert.ok(nonce, `${path} must carry a per-response CSP nonce`);
   const html = await response.text();
-  const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)];
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
   assert.ok(scripts.length > 0, `${path} should contain bootstrap scripts`);
-  for (const [, attributes] of scripts) {
-    assert.ok(
-      attributes.includes(`nonce="${nonce}"`) || attributes.includes(`nonce='${nonce}'`),
-      `${path} script nonce should match its Content-Security-Policy`,
-    );
+  const inlineHashes = [];
+  for (const [, attributes, body] of scripts) {
+    if (/\bsrc\s*=/i.test(attributes) || !body.trim()) continue;
+    const scriptNonce = attributes.match(/\bnonce\s*=\s*["']([^"']+)["']/i)?.[1];
+    const browserScriptText = body.replace(/\r\n?/g, "\n").replace(/\u0000/g, "\uFFFD");
+    const digest = createHash("sha256").update(browserScriptText, "utf8").digest("base64");
+    const hash = `'sha256-${digest}'`;
+    if (scriptNonce) {
+      assert.equal(scriptNonce, nonce, `${path} inline script nonce must match the response CSP`);
+      if (scriptDirective.includes(hash)) inlineHashes.push(hash);
+      continue;
+    }
+    assert.ok(scriptDirective.includes(hash), `${path} inline bootstrap script must match CSP`);
+    inlineHashes.push(hash);
   }
+  assert.ok(
+    scripts.some(([, attributes, body]) => !/\bsrc\s*=/i.test(attributes) && body.trim()),
+    `${path} should contain an inline bootstrap script`,
+  );
   const styleDirective = policy.match(/(?:^|;)\s*style-src\s+([^;]*)/i)?.[1] || "";
   const styleAttributeDirective = policy.match(/(?:^|;)\s*style-src-attr\s+([^;]*)/i)?.[1] || "";
   assert.ok(styleDirective, `${path} must have style-src`);
   assert.doesNotMatch(styleDirective, /'unsafe-inline'/i);
-  assert.ok(styleDirective.includes(`'nonce-${nonce}'`));
   assert.match(styleAttributeDirective, /'unsafe-inline'/i);
-  for (const [, attributes] of html.matchAll(/<style\b([^>]*)>/gi)) {
-    assert.ok(
-      attributes.includes(`nonce="${nonce}"`) || attributes.includes(`nonce='${nonce}'`),
-      `${path} style nonce should match its Content-Security-Policy`,
-    );
-  }
   assert.match(response.headers.get("cache-control") || "", /no-store/i);
-  return nonce;
+  return { html, policy, nonce, inlineHashes };
 }
 
 const first = await verifyDocument("/ceo");
 const second = await verifyDocument("/ceo");
-assert.notEqual(first, second, "HTML CSP nonces must rotate between requests");
+assert.notEqual(first.nonce, second.nonce, "the document CSP nonce must rotate per response");
+assert.deepEqual(first.inlineHashes, second.inlineHashes, "static bootstrap CSP hashes must be stable");
 await verifyDocument("/login");
 
-console.log("Cloud CSP verification passed (nonce header, script tags, no unsafe-inline, no-store, nonce rotation).");
+const fingerprintedAsset = first.html.match(/(?:src|href)=["'](\/assets\/[^"']+)["']/i)?.[1];
+assert.ok(fingerprintedAsset, "the HTML document should reference a fingerprinted static asset");
+const assetResponse = await fetch(`${baseUrl}${fingerprintedAsset}`, {
+  cache: "no-store",
+  signal: AbortSignal.timeout(15_000),
+});
+assert.equal(assetResponse.status, 200, "the fingerprinted static asset should be served");
+const assetCacheControl = assetResponse.headers.get("cache-control") || "";
+assert.match(
+  assetCacheControl,
+  /public,\s*max-age=31536000,\s*immutable/i,
+  "fingerprinted assets should receive the long-lived immutable browser cache policy",
+);
+assert.doesNotMatch(
+  assetCacheControl,
+  /no-store|no-cache/i,
+  "fingerprinted assets must not inherit the HTML no-store policy",
+);
+
+console.log("Cloud CSP and cache verification passed (nonce/hash-authorized inline scripts, no-store HTML, immutable fingerprinted assets).");

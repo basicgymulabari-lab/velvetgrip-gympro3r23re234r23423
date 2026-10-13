@@ -220,11 +220,27 @@ try {
   );
   assert.deepEqual(
     migration.summarizeTransferSelection(["active", "profile-only", "missing"], {
-      active: { current_membership: { active: true, membership_count: 3, active_membership_count: 1 } },
+      active: { current_membership: {
+        active: true,
+        membership_count: 3,
+        active_membership_count: 1,
+        linked_payment_count: 2,
+        linked_payment_total: 1800,
+        payment_currency: "₹",
+      } },
       "profile-only": { current_membership: null },
     }),
-    { selectedCount: 3, membershipCount: 3, activeMembershipCount: 1, profileOnlyCount: 1, missingPreviewCount: 1 },
-    "migration confirmation counts every historical membership, profile-only transfers, and missing previews",
+    {
+      selectedCount: 3,
+      membershipCount: 3,
+      activeMembershipCount: 1,
+      linkedPaymentCount: 2,
+      linkedPaymentTotal: 1800,
+      paymentCurrency: "₹",
+      profileOnlyCount: 1,
+      missingPreviewCount: 1,
+    },
+    "migration confirmation totals linked receipts and every historical term without hiding profile-only or missing previews",
   );
   assert.deepEqual(
     migration.transferResultNotice({

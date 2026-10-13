@@ -149,11 +149,18 @@ export function summarizeTransferSelection(
     active?: boolean;
     membership_count?: number;
     active_membership_count?: number;
+    linked_payment_count?: number;
+    linked_payment_total?: number;
+    payment_currency?: string;
   } | null }>,
 ) {
   let selectedCount = 0;
   let activeMembershipCount = 0;
   let membershipCount = 0;
+  let linkedPaymentCount = 0;
+  let linkedPaymentTotal = 0;
+  let paymentCurrency = "₹";
+  let hasPaymentCurrency = false;
   let profileOnlyCount = 0;
   let missingPreviewCount = 0;
 
@@ -166,6 +173,14 @@ export function summarizeTransferSelection(
       const membership = detail.current_membership;
       const terms = Math.max(0, Math.trunc(membership?.membership_count ?? (membership ? 1 : 0)));
       const activeTerms = Math.max(0, Math.trunc(membership?.active_membership_count ?? (membership?.active ? 1 : 0)));
+      const paymentCount = membership?.linked_payment_count ?? 0;
+      const paymentTotal = membership?.linked_payment_total ?? 0;
+      if (Number.isFinite(paymentCount)) linkedPaymentCount += Math.max(0, Math.trunc(paymentCount));
+      if (Number.isFinite(paymentTotal)) linkedPaymentTotal += paymentTotal;
+      if (!hasPaymentCurrency && membership?.payment_currency?.trim()) {
+        paymentCurrency = membership.payment_currency.trim();
+        hasPaymentCurrency = true;
+      }
       membershipCount += terms;
       activeMembershipCount += activeTerms;
       if (terms === 0) profileOnlyCount += 1;
@@ -176,6 +191,9 @@ export function summarizeTransferSelection(
     selectedCount,
     membershipCount,
     activeMembershipCount,
+    linkedPaymentCount,
+    linkedPaymentTotal,
+    paymentCurrency,
     profileOnlyCount,
     missingPreviewCount,
   };

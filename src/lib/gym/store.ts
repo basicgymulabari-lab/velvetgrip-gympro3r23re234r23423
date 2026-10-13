@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { buildSeed, uid, iso } from "./seed";
-import { configureCalendarSystem } from "./calendar";
+import { configureCalendarSystem, parseCalendarDate } from "./calendar";
 import { phoneForCountry } from "./phone";
 import { membershipEndDate } from "./membership";
 import {
@@ -1760,6 +1760,7 @@ export function renewMembership(
   paidNow: number,
   discount = 0,
   paymentMethod: Payment["method"] = "cash",
+  requestedStartDate?: string,
 ) {
   const before = getState();
   const selectedPlan = before.plans.find((item) => item.id === planId && !item.deletedAt);
@@ -1775,6 +1776,8 @@ export function renewMembership(
   ) {
     return false;
   }
+  const requestedStart = requestedStartDate ? parseCalendarDate(requestedStartDate) : undefined;
+  if (requestedStartDate && Number.isNaN(requestedStart?.getTime())) return false;
 
   let renewedMembershipId = "";
   const saved = setState((st) => {
@@ -1785,7 +1788,8 @@ export function renewMembership(
       .filter((m) => m.memberId === memberId)
       .sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
     const base =
-      current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date();
+      requestedStart ??
+      (current && new Date(current.endDate) > new Date() ? new Date(current.endDate) : new Date());
     const end = membershipEndDate(base, plan);
     const membership: Membership = {
       id: uid("mship"),

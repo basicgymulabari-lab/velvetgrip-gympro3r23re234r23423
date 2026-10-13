@@ -8,8 +8,14 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 const pageErrors = [];
 const cspViolations = [];
+let retiredDemoRedirectStatus;
 
-page.on("pageerror", (error) => pageErrors.push(error.message));
+page.on("pageerror", (error) => pageErrors.push(`${page.url()}: ${error.message}`));
+page.on("response", (response) => {
+  if (new URL(response.url()).pathname === "/ceo/demo") {
+    retiredDemoRedirectStatus = response.status();
+  }
+});
 await page.addInitScript(() => {
   window.__securityCspViolations = [];
   document.addEventListener("securitypolicyviolation", (event) => {
@@ -38,15 +44,38 @@ try {
   await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Welcome back" }).waitFor();
   await collectCurrentDocumentCspViolations();
+  assert.notEqual(
+    await page.locator('body > script[type="module"][src*="/assets/index-"]').getAttribute("async"),
+    null,
+    "the SPA bootstrap async attribute must match the TanStack script manifest",
+  );
   await page.getByRole("button", { name: "Gym owner" }).waitFor();
   await page.getByRole("button", { name: "Receptionist" }).waitFor();
   await page.getByLabel("Email address").waitFor();
   await page.locator("#account-password").waitFor();
   await page.getByRole("button", { name: "Sign in" }).waitFor();
+  const errorsBeforeWarmReload = pageErrors.length;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("heading", { name: "Welcome back" }).waitFor();
+  await collectCurrentDocumentCspViolations();
+  assert.equal(
+    pageErrors.length,
+    errorsBeforeWarmReload,
+    `a same-route reload with cached assets must not produce React hydration errors: ${pageErrors.slice(errorsBeforeWarmReload).join(" | ")}`,
+  );
 
   await page.goto(`${baseUrl}/ceo`, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "CEO sign in" }).waitFor();
   await collectCurrentDocumentCspViolations();
+  const errorsBeforeCeoWarmReload = pageErrors.length;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("heading", { name: "CEO sign in" }).waitFor();
+  await collectCurrentDocumentCspViolations();
+  assert.equal(
+    pageErrors.length,
+    errorsBeforeCeoWarmReload,
+    `a same-route CEO reload with cached route assets must not produce React hydration errors: ${pageErrors.slice(errorsBeforeCeoWarmReload).join(" | ")}`,
+  );
   assert.equal(await page.getByText(/sample demo/i).count(), 0);
   assert.equal(await page.getByText(/demo@ironvault\.local/i).count(), 0);
 
@@ -54,6 +83,7 @@ try {
   await page.waitForURL(/\/ceo(?:$|\?)/);
   await page.getByRole("heading", { name: "CEO sign in" }).waitFor();
   await collectCurrentDocumentCspViolations();
+  assert.equal(retiredDemoRedirectStatus, 308, "retired CEO demo should redirect at the edge");
   assert.equal(await page.getByText(/CEO Hub Demo|sample-only demo/i).count(), 0);
   assert.equal(await page.getByText(/DemoOnly!2026/i).count(), 0);
 

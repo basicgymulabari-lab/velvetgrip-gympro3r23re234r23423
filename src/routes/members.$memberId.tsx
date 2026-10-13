@@ -26,6 +26,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
+import { AppDatePicker } from "@/components/app/AppDatePicker";
 import { PageHeader, Panel, EmptyState } from "@/components/app/Panel";
 import { StatusBadge } from "@/components/app/StatCard";
 import { MemberFormDialog } from "@/components/app/MemberFormDialog";
@@ -74,6 +75,7 @@ import {
   compactDate,
   statusOf,
 } from "@/lib/gym/selectors";
+import { localDateInput, parseCalendarDate } from "@/lib/gym/calendar";
 import type {
   GymState,
   Measurement,
@@ -976,11 +978,23 @@ export function RenewDialog({
   onDone?: () => void;
 }) {
   const state = useGym();
+  const membershipTerms = state?.memberships;
   const [planId, setPlanId] = useState("");
   const [discountType, setDiscountType] = useState<"none" | "percent" | "fixed">("none");
   const [discountValue, setDiscountValue] = useState("");
   const [paid, setPaid] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [startDate, setStartDate] = useState("");
+  useEffect(() => {
+    if (!open || !membershipTerms) return;
+    const latestTerm = membershipTerms
+      .filter((membership) => membership.memberId === memberId)
+      .sort((a, b) => +new Date(b.endDate) - +new Date(a.endDate))[0];
+    const latestEnd = latestTerm ? parseCalendarDate(latestTerm.endDate.slice(0, 10)) : undefined;
+    const today = new Date();
+    const defaultStart = latestEnd && latestEnd > today ? latestEnd : today;
+    setStartDate(localDateInput(defaultStart));
+  }, [open, memberId, membershipTerms]);
   if (!state) return null;
   const plan = state.plans.find((p) => p.id === planId);
   const cur = state.settings.currency;
@@ -1012,6 +1026,7 @@ export function RenewDialog({
     setDiscountType("none");
     setDiscountValue("");
     setPaymentMethod("cash");
+    setStartDate("");
   };
 
   return (
@@ -1039,6 +1054,17 @@ export function RenewDialog({
                   ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Membership start date</Label>
+            <AppDatePicker
+              value={startDate}
+              onChange={setStartDate}
+              placeholder="Select renewal start date"
+            />
+            <p className="text-xs text-muted-foreground">
+              The new term begins on this date; past dates are allowed.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Discount type</Label>
@@ -1121,14 +1147,23 @@ export function RenewDialog({
               Cancel
             </Button>
             <Button
-              disabled={!planId || !paidValid || !discountValid}
+              disabled={!planId || !startDate || !paidValid || !discountValid}
               onClick={() => {
                 const amount = Number(paid || 0);
                 if (!Number.isFinite(amount) || amount < 0 || amount > finalPrice) {
                   toast.error("Enter a valid amount");
                   return;
                 }
-                if (!renewMembership(memberId, planId, amount, discountAmount, paymentMethod)) {
+                if (
+                  !renewMembership(
+                    memberId,
+                    planId,
+                    amount,
+                    discountAmount,
+                    paymentMethod,
+                    startDate,
+                  )
+                ) {
                   toast.error("Renewal was not saved. Check the account, member and plan details.");
                   return;
                 }

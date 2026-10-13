@@ -17,7 +17,22 @@ declare
       'email', 'qa-backup@example.invalid', 'phone', '+977 9800000000', 'gender', 'other', 'dob', null,
       'address', '', 'photo', null, 'joinDate', '2026-01-01T00:00:00.000Z', 'emergencyContact', '',
       'notes', '[]'::jsonb, 'measurements', '[]'::jsonb, 'deletedAt', null, 'deletedBy', null)),
-    'plans', '[]'::jsonb, 'memberships', '[]'::jsonb, 'payments', '[]'::jsonb,
+    'plans', jsonb_build_array(jsonb_build_object(
+      'id', 'qa-backup-plan', 'name', 'Three Month Package', 'price', 7500,
+      'joiningFee', 1500, 'durationDays', 90, 'description', 'QA paid-term plan',
+      'active', true, 'deletedAt', null
+    )),
+    'memberships', jsonb_build_array(jsonb_build_object(
+      'id', 'qa-backup-membership', 'memberId', 'qa-backup-member', 'planId', 'qa-backup-plan',
+      'startDate', '2026-01-01T00:00:00.000Z', 'endDate', '2026-03-31T00:00:00.000Z',
+      'price', 7500, 'discount', 0, 'joiningFee', 1500, 'frozen', false,
+      'frozenAt', null, 'createdAt', '2026-01-01T00:00:00.000Z'
+    )),
+    'payments', jsonb_build_array(jsonb_build_object(
+      'id', 'qa-backup-payment', 'invoiceNo', 'QA-PAID-001', 'memberId', 'qa-backup-member',
+      'membershipId', 'qa-backup-membership', 'kind', 'membership', 'amount', 9000,
+      'method', 'upi', 'date', '2026-01-01T00:00:00.000Z', 'note', 'Paid in full at registration'
+    )),
     'products', '[]'::jsonb, 'sales', '[]'::jsonb, 'activities', '[]'::jsonb,
     'expenses', '[]'::jsonb, 'inquiries', '[]'::jsonb, 'readNotifications', '[]'::jsonb, 'invoiceSeq', 0
   );
@@ -91,17 +106,37 @@ begin
   end if;
   if v_snapshot #>> '{gym,id}' <> v_gym::text
     or v_snapshot #>> '{gym,name}' <> 'QA Backup Gym'
-    or v_snapshot #>> '{workspace,state,members,0,id}' <> 'qa-backup-member' then
+    or v_snapshot #>> '{workspace,state,members,0,id}' <> 'qa-backup-member'
+    or v_snapshot #>> '{workspace,state,plans,0,id}' <> 'qa-backup-plan'
+    or (v_snapshot #>> '{workspace,state,plans,0,price}')::numeric <> 7500
+    or v_snapshot #>> '{workspace,state,memberships,0,id}' <> 'qa-backup-membership'
+    or v_snapshot #>> '{workspace,state,memberships,0,startDate}' <> '2026-01-01T00:00:00.000Z'
+    or v_snapshot #>> '{workspace,state,memberships,0,endDate}' <> '2026-03-31T00:00:00.000Z'
+    or v_snapshot #>> '{workspace,state,payments,0,invoiceNo}' <> 'QA-PAID-001'
+    or (v_snapshot #>> '{workspace,state,payments,0,amount}')::numeric <> 9000
+    or v_snapshot #>> '{workspace,state,payments,0,date}' <> '2026-01-01T00:00:00.000Z' then
     raise exception 'downloaded snapshot did not contain the original QA workspace: %', v_snapshot;
   end if;
 
   -- Simulate later edits to the disposable workspace before trying a restore.
   update public.gym_workspaces set state = jsonb_set(
-    jsonb_set(state, '{settings,gymName}', '"QA Backup Gym Changed"'::jsonb, true),
-    '{members}', '[]'::jsonb, true
+    jsonb_set(
+      jsonb_set(
+        jsonb_set(
+          jsonb_set(state, '{settings,gymName}', '"QA Backup Gym Changed"'::jsonb, true),
+          '{members}', '[]'::jsonb, true
+        ),
+        '{plans}', '[]'::jsonb, true
+      ),
+      '{memberships}', '[]'::jsonb, true
+    ),
+    '{payments}', '[]'::jsonb, true
   ), revision = revision + 1 where gym_id = v_gym;
   select state into v_current from public.gym_workspaces where gym_id = v_gym;
   if jsonb_array_length(v_current -> 'members') <> 0
+    or jsonb_array_length(v_current -> 'plans') <> 0
+    or jsonb_array_length(v_current -> 'memberships') <> 0
+    or jsonb_array_length(v_current -> 'payments') <> 0
     or (select name from public.gyms where id = v_gym) <> 'QA Backup Gym Changed' then
     raise exception 'failed to prepare disposable changed-workspace fixture';
   end if;
@@ -144,6 +179,17 @@ begin
     or (v_result ->> 'workspace_revision')::bigint <> 3
     or v_state #>> '{settings,gymName}' <> 'QA Backup Gym'
     or v_state #>> '{members,0,id}' <> 'qa-backup-member'
+    or v_state #>> '{plans,0,id}' <> 'qa-backup-plan'
+    or (v_state #>> '{plans,0,price}')::numeric <> 7500
+    or v_state #>> '{memberships,0,id}' <> 'qa-backup-membership'
+    or v_state #>> '{memberships,0,memberId}' <> 'qa-backup-member'
+    or v_state #>> '{memberships,0,planId}' <> 'qa-backup-plan'
+    or v_state #>> '{memberships,0,startDate}' <> '2026-01-01T00:00:00.000Z'
+    or v_state #>> '{memberships,0,endDate}' <> '2026-03-31T00:00:00.000Z'
+    or v_state #>> '{payments,0,invoiceNo}' <> 'QA-PAID-001'
+    or v_state #>> '{payments,0,membershipId}' <> 'qa-backup-membership'
+    or (v_state #>> '{payments,0,amount}')::numeric <> 9000
+    or v_state #>> '{payments,0,date}' <> '2026-01-01T00:00:00.000Z'
     or (select name from public.gyms where id = v_gym) <> 'QA Backup Gym' then
     raise exception 'backup restore did not restore original QA data and name: %, %', v_result, v_state;
   end if;

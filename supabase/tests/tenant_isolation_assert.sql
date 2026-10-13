@@ -40,6 +40,16 @@ begin
 end;
 $$;
 
+insert into public.gym_users (gym_id, user_id, role, display_name, email, permissions)
+values (
+  'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  '54000000-0000-0000-0000-000000000004',
+  'receptionist',
+  'Staff Without Member Access',
+  'qa-member-a@example.com',
+  '{"members":false}'
+);
+
 insert into public.gym_workspaces (owner_id, gym_id, revision, state) values
   (
     '51000000-0000-0000-0000-000000000001',
@@ -51,7 +61,7 @@ insert into public.gym_workspaces (owner_id, gym_id, revision, state) values
     '52000000-0000-0000-0000-000000000002',
     'cbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     1,
-    '{"version":1,"auth":{"email":"","passwordHash":""},"staff":{},"settings":{"gymName":"QA Gym B","adminName":"Owner B"},"members":[],"plans":[],"memberships":[],"payments":[],"products":[{"id":"product-b","name":"B Protein","cost":999,"price":1200,"stock":7}],"sales":[],"activities":[],"expenses":[{"id":"expense-b","title":"Rent B","amount":900}],"inquiries":[],"readNotifications":[],"invoiceSeq":0}'
+    '{"version":1,"auth":{"email":"","passwordHash":""},"staff":{},"settings":{"gymName":"QA Gym B","adminName":"Owner B"},"members":[{"id":"attendance-member-b","type":"member","name":"Attendance Member B","phone":"9800000000","email":"","deletedAt":null}],"plans":[],"memberships":[],"payments":[],"products":[{"id":"product-b","name":"B Protein","cost":999,"price":1200,"stock":7}],"sales":[],"activities":[],"expenses":[{"id":"expense-b","title":"Rent B","amount":900}],"inquiries":[],"readNotifications":[],"invoiceSeq":0}'
   );
 
 insert into public.subscription_entitlements (
@@ -200,6 +210,30 @@ begin
 end;
 $$;
 
+-- Attendance is gym-scoped, idempotent per member/day, and written only
+-- through the permission-checked RPC (not direct client table inserts).
+select public.record_current_member_attendance('template-member-1', current_date);
+do $$
+declare
+  v_result jsonb;
+begin
+  v_result := public.record_current_member_attendance('template-member-1', current_date);
+  if v_result ->> 'status' <> 'already_checked_in' then
+    raise exception 'duplicate attendance check-in was not idempotent';
+  end if;
+  if (select count(*) from public.gym_member_attendance where gym_id = 'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid and member_id = 'template-member-1' and attendance_date = current_date) <> 1 then
+    raise exception 'member attendance did not persist exactly once';
+  end if;
+  begin
+    insert into public.gym_member_attendance (gym_id, member_id, attendance_date)
+    values ('caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'template-member-2', current_date);
+    raise exception 'direct attendance table insert unexpectedly succeeded';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$$;
+
 select set_config('request.jwt.claim.sub', '52000000-0000-0000-0000-000000000002', true);
 do $$
 begin
@@ -213,6 +247,12 @@ begin
       or public.get_current_gym_context() ->> 'subscription_source' is not null
       or public.get_current_gym_context() ->> 'subscription_current_period_end' is not null then
     raise exception 'owner B received Gym A subscription details';
+  end if;
+  if public.record_current_member_attendance('attendance-member-b', current_date) ->> 'status' <> 'checked_in' then
+    raise exception 'Gym B owner could not check in its own member';
+  end if;
+  if exists (select 1 from public.gym_member_attendance where gym_id = 'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid) then
+    raise exception 'Gym B can read Gym A attendance';
   end if;
 end;
 $$;
@@ -246,6 +286,36 @@ begin
       or (v_context ->> 'subscription_current_period_end')::timestamptz <= now() then
     raise exception 'receptionist did not resolve the gym Pro entitlement summary';
   end if;
+  if not exists (
+    select 1 from public.gym_member_attendance
+    where gym_id = 'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+      and member_id = 'template-member-1'
+      and attendance_date = current_date
+  ) then
+    raise exception 'receptionist with members permission cannot read attendance';
+  end if;
+  if public.record_current_member_attendance('template-member-2', current_date) ->> 'status' <> 'checked_in' then
+    raise exception 'receptionist with members permission cannot record attendance';
+  end if;
+end;
+$$;
+
+select set_config('request.jwt.claim.sub', '54000000-0000-0000-0000-000000000004', true);
+do $$
+begin
+  if exists (
+    select 1 from public.gym_member_attendance
+    where gym_id = 'caaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+  ) then
+    raise exception 'receptionist without members permission can read attendance';
+  end if;
+  begin
+    perform public.record_current_member_attendance('template-member-3', current_date);
+    raise exception 'receptionist without members permission recorded attendance';
+  exception
+    when insufficient_privilege then
+      if sqlerrm <> 'ATTENDANCE_FORBIDDEN' then raise; end if;
+  end;
 end;
 $$;
 

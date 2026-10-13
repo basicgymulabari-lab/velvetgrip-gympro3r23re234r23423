@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlatformLiveUpdates } from "@/components/app/platform-live-updates-context";
+import { downloadCsv } from "@/lib/gym/csv";
 
 type GymRow = {
   gym_id: string;
@@ -111,9 +112,11 @@ export function CeoControlCenter({
   const [selectedGym, setSelectedGym] = useState("");
   const [backups, setBackups] = useState<Backup[]>([]);
   const [audit, setAudit] = useState<Audit[]>([]);
+  const [auditSearch, setAuditSearch] = useState("");
   const [auditPage, setAuditPage] = useState(1);
   const [totalAudit, setTotalAudit] = useState(0);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState(false);
   const gymRequest = useRef(0);
   const auditRequest = useRef(0);
   const [busy, setBusy] = useState(false);
@@ -171,6 +174,10 @@ export function CeoControlCenter({
       const result = (data ?? []) as Audit[];
       setAudit(result);
       setTotalAudit(Number(result[0]?.total_count ?? 0));
+      setAuditError(false);
+    } catch (error) {
+      if (requestId === auditRequest.current) setAuditError(true);
+      throw error;
     } finally {
       if (requestId === auditRequest.current) setAuditLoading(false);
     }
@@ -215,6 +222,42 @@ export function CeoControlCenter({
     () => gyms.find((gym) => gym.gym_id === selectedGym)?.gym_name ?? "",
     [gyms, selectedGym],
   );
+
+  const visibleAudit = useMemo(() => {
+    const query = auditSearch.trim().toLocaleLowerCase();
+    if (!query) return audit;
+    return audit.filter((event) =>
+      [event.admin_email, event.gym_name, event.gym_id, event.action, event.result, event.created_at]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(query)),
+    );
+  }, [audit, auditSearch]);
+
+  const refreshAfterAction = async (tasks: Array<() => Promise<unknown>>) => {
+    const results = await Promise.allSettled(tasks.map((task) => task()));
+    if (results.some((result) => result.status === "rejected")) {
+      toast.warning("The action completed, but some dashboard data did not refresh. Use Refresh data to verify it.");
+    }
+  };
+
+  const exportVisibleAudit = () => {
+    if (!visibleAudit.length) return;
+    downloadCsv(
+      `platform-audit-page-${auditPage}-${new Date().toISOString().slice(0, 10)}.csv`,
+      [
+        ["Audit ID", "Timestamp (UTC)", "Administrator", "Gym", "Action", "Result"],
+        ...visibleAudit.map((event) => [
+          event.id,
+          event.created_at,
+          event.admin_email,
+          event.gym_name ?? "Platform",
+          event.action,
+          event.result,
+        ]),
+      ],
+    );
+    toast.success(`${visibleAudit.length} visible audit events exported. Sensitive event metadata was excluded.`);
+  };
 
   const setGymStatus = async (
     gym: GymRow,
@@ -275,7 +318,7 @@ export function CeoControlCenter({
             ? "Gym archived. Its data is preserved in read-only mode."
             : "Gym suspended. Its existing data remains readable.";
       toast.success(successMessage);
-      await Promise.all([loadGyms(), loadSummary(), loadAudit()]);
+      await refreshAfterAction([loadGyms, loadSummary, loadAudit]);
     } catch {
       toast.error("The account status could not be changed.");
     } finally {
@@ -290,7 +333,7 @@ export function CeoControlCenter({
       const { error } = await supabase.rpc("platform_create_gym_backup", { p_gym_id: selectedGym });
       if (error) throw error;
       toast.success("A secure workspace snapshot was saved to backup history.");
-      await Promise.all([loadBackups(selectedGym), loadAudit()]);
+      await refreshAfterAction([() => loadBackups(selectedGym), loadAudit]);
     } catch {
       toast.error("Backup failed. No production data was modified.");
     } finally {
@@ -313,7 +356,7 @@ export function CeoControlCenter({
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       toast.success("Backup downloaded. Store this customer data securely.");
-      await loadAudit();
+      await refreshAfterAction([loadAudit]);
     } catch {
       toast.error("Backup download failed.");
     } finally {
@@ -352,7 +395,7 @@ export function CeoControlCenter({
       setRestoreBackup(null);
       setRestoreConfirmation("");
       toast.success("Snapshot pushed to the gym. A pre-push snapshot is available in history.");
-      await Promise.all([loadBackups(selectedGym), loadGyms(), loadAudit()]);
+      await refreshAfterAction([() => loadBackups(selectedGym), loadGyms, loadAudit]);
     } catch {
       toast.error("Push failed. The database transaction was rolled back; no partial restore was applied.");
     } finally {
@@ -850,10 +893,45 @@ export function CeoControlCenter({
       {view === "audit" && (
         <Panel
           title="Platform audit log"
-          description="Security-sensitive CEO and subscription/key events, newest first."
+          description="Search and export the visible page of CEO events. Private event metadata stays in the protected console."
         >
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                aria-label="Search visible audit events"
+                placeholder="Search this page by admin, gym, action or result"
+                value={auditSearch}
+                onChange={(event) => setAuditSearch(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={exportVisibleAudit}
+              disabled={auditLoading || visibleAudit.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" /> Export visible events ({visibleAudit.length})
+            </Button>
+          </div>
+          {auditError && (
+            <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
+              <span>Platform activity could not be loaded. The list may be out of date.</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void loadAudit().catch(() => undefined)}
+                disabled={auditLoading}
+              >
+                {auditLoading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Retry
+              </Button>
+            </div>
+          )}
           <div className="space-y-2">
-            {audit.map((event) => (
+            {visibleAudit.map((event) => (
               <article
                 key={event.id}
                 className="grid gap-1 rounded-lg border border-border p-3 sm:grid-cols-[1fr_auto] sm:items-center"
@@ -875,9 +953,17 @@ export function CeoControlCenter({
                 <time className="text-xs text-muted-foreground">{date(event.created_at)}</time>
               </article>
             ))}
-            {audit.length === 0 && (
+            {audit.length === 0 && !auditLoading && !auditError && (
               <p className="p-4 text-sm text-muted-foreground">
                 No audit events have been recorded.
+              </p>
+            )}
+            {audit.length === 0 && auditLoading && (
+              <p className="p-4 text-sm text-muted-foreground">Loading platform activity…</p>
+            )}
+            {audit.length > 0 && visibleAudit.length === 0 && (
+              <p className="p-4 text-sm text-muted-foreground">
+                No events on this page match your search.
               </p>
             )}
           </div>

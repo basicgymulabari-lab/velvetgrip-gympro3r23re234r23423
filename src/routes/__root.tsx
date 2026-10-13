@@ -7,7 +7,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 
 import appCss from "../styles.css?url";
@@ -147,11 +147,25 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [clientReady, setClientReady] = useState(false);
+
+  useEffect(() => {
+    setClientReady(true);
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      {clientReady ? (
+        <Outlet />
+      ) : (
+        <div
+          className="grid min-h-[30vh] place-items-center text-sm text-muted-foreground"
+          role="status"
+        >
+          Loading your workspace…
+        </div>
+      )}
       <Toaster />
     </QueryClientProvider>
   );

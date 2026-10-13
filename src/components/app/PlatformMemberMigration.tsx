@@ -86,6 +86,9 @@ type RemoteMigrationMember = {
     price: number;
     membership_count?: number;
     active_membership_count?: number;
+    linked_payment_count?: number;
+    linked_payment_total?: number;
+    payment_currency?: string;
   } | null;
   total_count: number;
 };
@@ -971,6 +974,9 @@ export function PlatformMemberMigration() {
             <p><strong>{transferSummary.selectedCount.toLocaleString()}</strong> member profile(s) selected</p>
             <p>{transferSummary.membershipCount.toLocaleString()} membership term(s) across the selected profiles will transfer; {transferSummary.activeMembershipCount.toLocaleString()} currently active term(s) are included.</p>
             <p>{context?.source_plans.length.toLocaleString()} source plan(s) will be matched to an identical destination plan or copied automatically.</p>
+            {transferSummary.membershipCount > 0 && <p className="text-muted-foreground">
+              {transferSummary.linkedPaymentCount.toLocaleString()} linked payment record(s) · {transferSummary.paymentCurrency}{transferSummary.linkedPaymentTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })} total {movePayments ? "will move" : "will stay with the source history"}.
+            </p>}
             {transferSummary.profileOnlyCount > 0 && <p className="text-warning">
               {transferSummary.profileOnlyCount.toLocaleString()} profile(s) have no membership history; they will arrive without a membership. Gym-owner Pro does not grant an individual member a plan.
             </p>}
@@ -981,7 +987,7 @@ export function PlatformMemberMigration() {
           <Label className="grid gap-2">Type the destination gym name to confirm<Input value={transferConfirmName} onChange={(event) => setTransferConfirmName(event.target.value)} /></Label>
           {transferSummary.membershipCount > 0 && <div className="rounded-lg border border-border p-3 text-sm">
             <p className="font-medium">Membership payment records</p>
-            <label className="mt-2 flex items-start gap-2"><input type="checkbox" checked={movePayments} onChange={(event) => setMovePayments(event.target.checked)} className="mt-1" /><span>Move all payment records linked to the transferred membership history, assigning new destination invoice numbers and retaining the original invoice number in each note. The original payment rows leave the source gym.</span></label>
+            <label className="mt-2 flex items-start gap-2"><input type="checkbox" checked={movePayments} onChange={(event) => setMovePayments(event.target.checked)} className="mt-1" /><span>Move these records with the membership history. Destination invoices will be renumbered; the original invoice number stays in each note.</span></label>
             {!movePayments && <p className="mt-2 text-warning">The source keeps its original memberships and payment history. Membership terms are copied to the destination without payments, so their balances may show as due there.</p>}
           </div>}
           {duplicateOverrides.size > 0 && <p className="text-sm text-warning">You explicitly approved {duplicateOverrides.size} possible duplicate(s) for this operation.</p>}

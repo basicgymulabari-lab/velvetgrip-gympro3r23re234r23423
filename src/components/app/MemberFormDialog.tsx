@@ -871,7 +871,6 @@ export function MemberFormDialog({
                 <AppDatePicker
                   value={form.startDate}
                   onChange={(value) => set("startDate", value)}
-                  min={new Date(new Date().setHours(0, 0, 0, 0))}
                   max={new Date(new Date().getFullYear() + 5, 11, 31)}
                   placeholder="Select start date"
                 />
